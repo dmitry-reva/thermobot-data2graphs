@@ -1,0 +1,40 @@
+# Loads default set of integrations. Do not remove.
+default_config:
+
+# Load frontend themes from the themes folder
+frontend:
+  themes: !include_dir_merge_named themes
+
+automation: !include automations.yaml
+script: !include scripts.yaml
+scene: !include scenes.yaml
+
+sensor:
+  - platform: rest
+    resource: http://IP1/read
+    name: "Название датчика 1"
+    unique_id: "temperatura_1"
+    value_template: "{{ value | regex_findall('\\d+\\.\\d+') | first | float }}"
+    unit_of_measurement: "°C"
+    device_class: temperature
+    scan_interval: 90
+    force_update: true
+    timeout: 20
+    verify_ssl: false
+
+  - platform: rest
+    resource: http://IP2/read
+    name: "Название датчика 2"
+    unique_id: "temperatura_2"
+    value_template: "{{ value | regex_findall('\\d+\\.\\d+') | first | float }}"
+    unit_of_measurement: "°C"
+    device_class: temperature
+    scan_interval: 90
+    force_update: true
+    timeout: 20
+    verify_ssl: false
+
+mqtt:
+  sensor:
+    - name: "Температура датчиков для MQTT"
+      state_topic: "homeassistant/sensors/temperature"
