@@ -1,0 +1,15 @@
+[Unit]
+Description=Thermobot Graf
+After=network.target
+
+
+[Service]
+User=dmr
+WorkingDirectory=/opt/thermobot_graf
+Environment="PATH=/opt/thermobot_graf/venv/bin"
+ExecStart=/opt/thermobot_graf/venv/bin/python3 /opt/thermobot_graf/plot_temperatures.py
+# Restart=always
+
+
+[Install]
+RequiredBy=thermobot.timer

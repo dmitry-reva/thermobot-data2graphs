@@ -1,0 +1,8 @@
+/var/log/thermobot_logs/*.log {
+    daily
+    rotate 30
+    delaycompress
+    missingok
+    notifempty
+    create 0640 dmr root
+}

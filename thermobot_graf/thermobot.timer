@@ -1,0 +1,12 @@
+[Unit]
+Description=Timer for Thermobot Graf (starts after 60 min)
+
+
+[Timer]
+OnBootSec=20min 
+OnUnitInactiveSec=20min
+Unit=thermobot.service
+
+
+[Install]
+WantedBy=timers.target
