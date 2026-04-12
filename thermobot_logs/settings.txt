@@ -1,0 +1,2 @@
+MAC_LIST=
+IP_LIST=
