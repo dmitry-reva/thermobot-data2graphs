@@ -25,8 +25,9 @@
 
 - **Прошивка:** в ESPHome для ESP8266MOD (4Mb) с помощью [heatflow.yaml](heatflow.yaml) скомпилируйте firmware.bin.
 
-```cmd Windows
-esptool --chip esp8266 --port COM4 --baud 115200 write-flash --flash-mode qio --flash-size 4MB 0x00000 firmware.bin```
+```Команда для прошивки ESP8266 в командной строке Windows (cmd):
+esptool --chip esp8266 --port COM4 --baud 115200 write-flash --flash-mode qio --flash-size 4MB 0x00000 firmware.bin
+
 
 ## Настройка
 
