@@ -1,3 +1,15 @@
+# ==============================================================================
+# ESPHome Configuration (Tested version: ESPHome 2026.9.1)
+# ==============================================================================
+# Board:       Thermobot-2 Mini
+# Manufacturer: 42unita.ru (https://www.42unita.ru)
+# Device Name: HeatFlow
+# Purpose:     DS18B20 temperature sensing (supply/return), LED status indication,
+#              Wi‑Fi connectivity with boot/connect audible/visual alerts.
+# Sensors:     Dallas DS18B20 (one‑wire) оn GPIO0. Number of sensors is optional.
+# Outputs:     LED on GPIO2, buzzer (optional)
+# ==============================================================================
+
 substitutions:
   devicename: heatflow
   upper_devicename: HeatFlow
@@ -8,13 +20,17 @@ substitutions:
   web_server_user: ${devicename}
   web_server_pass: !secret web_server_pass
   api_key: !secret api_key
+  # addresses ds18b20 (dallas_temp)
+  addr_supply: "0x00000000b34d1328"
+  addr_return: "0xb7000000cb2eb328"
 
 esphome:
   name: ${devicename}
   friendly_name: ${devicefriendlyname}
   name_add_mac_suffix: false
   on_boot:
-    - then: []
+    - then: 
+        - script.execute: blink_led
 
 esp8266:
   board: nodemcuv2
@@ -33,7 +49,12 @@ wifi:
     ssid: ${devicefriendlyname}
     password: ${web_server_pass}
   on_connect:
-    then: []
+    then:
+      - repeat:
+          count: 7
+          then:
+            - script.execute: blink_led
+            - delay: 300ms 
 
 captive_portal:
 
@@ -58,7 +79,7 @@ one_wire:
 sensor:
   - platform: dallas_temp
     one_wire_id: bus_gpio0
-    address: 0x00000000b34d1328
+    address: ${addr_supply}
     name: "Supply temperature"
     update_interval: 30s
     accuracy_decimals: 2
@@ -66,7 +87,7 @@ sensor:
 
   - platform: dallas_temp
     one_wire_id: bus_gpio0
-    address: 0xb7000000cb2eb328
+    address: ${addr_return}
     name: "Return temperature"
     update_interval: 30s
     accuracy_decimals: 2
@@ -105,5 +126,5 @@ script:
     mode: single
     then:
       - switch.turn_on: led_switch
-      - delay: 300ms
+      - delay: 200ms
       - switch.turn_off: led_switch
