@@ -38,10 +38,19 @@
 Команда для прошивки ESP8266 в командной строке Windows:
 
 ```CLI
-(venv) C:\esp\tools\python\v6.0.2\venv\Scripts>esptool --chip esp8266 --port COM4 --baud 115200 write-flash --flash-mode qio --flash-size 4MB 0x00000 firmware.bin
+(venv) C:\esp\...\venv\Scripts>esptool --chip esp8266 --port COM4 --baud 115200 write-flash --flash-mode qio --flash-size 4MB 0x00000 firmware.bin
 ```
 
-Вывод успешной прошивки
+
+**Важные моменты:**
+- usb type-c для прошивки **не используется!**, использовать только для питания устройства;
+- замените COM4 на актуальный COM‑порт вашего устройства;
+- файл firmware.bin должен находиться в текущей рабочей директории либо укажите полный путь к нему;
+- вариантов способов прошивки несколько, приведен тот который точно работает.
+
+
+
+Вывод после успешной прошивки
 
 
 ```
@@ -64,19 +73,13 @@ Hard resetting via RTS pin...
 ```
 
 
-Важные моменты:
-- замените COM4 на актуальный COM‑порт вашего устройства;
-- файл firmware.bin должен находиться в текущей рабочей директории либо укажите полный путь к нему.
-
-
-
-
 ## Настройка
 
 ### Секреты
 В файле `secrets.yaml` укажите:
 ```yaml
-wifi_0f: "ваш_ssid"
-wifi_password: "ваш_пароль"
+wifi_0f: "ssid_вашей_сети_2.1GHz"
+wifi_password: "пароль_вашей_сети_2.1GHz"
 web_server_pass: "пароль_для_веб_интерфейса"
 api_key: "api_ключ_для_home_assistant"
+```
