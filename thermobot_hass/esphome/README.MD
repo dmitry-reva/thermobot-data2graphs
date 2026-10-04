@@ -16,13 +16,17 @@
 - **Производитель:** [42unita.ru](https://www.42unita.ru).
 - **Датчики:** DS18B20 (one‑wire). В оригинале от производителя смонтирован один, под проект без изменения схемы подключения параллельно добавлен еще один.
 - **Индикатор:** светодиод с инверсной логикой.
+- **Программатор:** конвертер USB в TTL (RS232) на базе CH340G, адаптер USB/UART + CTS, RTS.
 
 <img src="PINOUT-MINI2.JPG" alt="Схема пинов для прошивки Thermobot‑2 Mini" width="700">
 *Рисунок: Схема пинов для прошивки Thermobot‑2 Mini.*
 
 ## Программная часть
 
-- **Прошивка:** ESPHome для ESP8266MOD (4Mb) ![heatflow.yaml](heatflow.yaml).
+- **Прошивка:** в ESPHome для ESP8266MOD (4Mb) с помощью [heatflow.yaml](heatflow.yaml) скомпилируйте firmware.bin.
+
+```cmd Windows
+esptool --chip esp8266 --port COM4 --baud 115200 write-flash --flash-mode qio --flash-size 4MB 0x00000 firmware.bin```
 
 ## Настройка
 
