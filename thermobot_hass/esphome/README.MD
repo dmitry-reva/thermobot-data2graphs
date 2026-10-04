@@ -19,6 +19,7 @@
 - **Прошивка:** с конвертером USB в TTL (RS232) на базе CH340G.
 
 <img src="PINOUT-MINI2.JPG" alt="Схема пинов для прошивки Thermobot‑2 Mini" width="700">
+
 *Рисунок: Схема пинов для прошивки Thermobot‑2 Mini.*
 
 ## Программная часть
@@ -37,6 +38,7 @@ esptool --chip esp8266 --port COM4 --baud 115200 write-flash --flash-mode qio --
 - файл firmware.bin должен находиться в текущей рабочей директории либо укажите полный путь к нему.
 
 <img src="write-bin.jpeg" alt="подключение Thermobot‑2 Mini через конвертер для первой прошивки" width="700">
+
 *Рисунок: Подключение Thermobot‑2 Mini через конвертер для первой прошивки*
 
 
