@@ -29,10 +29,12 @@
 - **Web-интерфейс** доступен в новой прошивке по адресу mDNS в локальной сети: [heatflow.local](http://heatflow.local), либо IP.
 - **Home Assistant** получит новое устройство через стандартную интеграцию ESPhome.
 
+## Прошивка (случай автора)
+
 Команда для прошивки ESP8266 в командной строке Windows:
 
 
-```CMD
+```console
 esptool --chip esp8266 --port COM4 --baud 115200 write-flash --flash-mode qio --flash-size 4MB 0x00000 firmware.bin
 ```
 
