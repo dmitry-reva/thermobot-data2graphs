@@ -1,0 +1,109 @@
+substitutions:
+  devicename: heatflow
+  upper_devicename: HeatFlow
+  model: Dual
+  devicefriendlyname: ${upper_devicename} ${model}
+  wifi_ssid: !secret wifi_0f
+  wifi_pass: !secret wifi_password
+  web_server_user: ${devicename}
+  web_server_pass: !secret web_server_pass
+  api_key: !secret api_key
+
+esphome:
+  name: ${devicename}
+  friendly_name: ${devicefriendlyname}
+  name_add_mac_suffix: false
+  on_boot:
+    - then: []
+
+esp8266:
+  board: nodemcuv2
+
+api:
+  encryption:
+    key: ${api_key}
+
+ota:
+  - platform: esphome
+
+wifi:
+  ssid: ${wifi_ssid}
+  password: ${wifi_pass}
+  ap:
+    ssid: ${devicefriendlyname}
+    password: ${web_server_pass}
+  on_connect:
+    then: []
+
+captive_portal:
+
+web_server:
+  port: 80
+  local: true
+  version: 2
+  log: false
+  auth:
+    username: ${web_server_user}
+    password: ${web_server_pass}
+    type: digest
+    
+logger:
+  level: DEBUG
+
+one_wire:
+  - platform: gpio
+    id: bus_gpio0
+    pin: GPIO0
+
+sensor:
+  - platform: dallas_temp
+    one_wire_id: bus_gpio0
+    address: 0x00000000b34d1328
+    name: "Supply temperature"
+    update_interval: 30s
+    accuracy_decimals: 2
+    icon: "mdi:temperature-celsius"
+
+  - platform: dallas_temp
+    one_wire_id: bus_gpio0
+    address: 0xb7000000cb2eb328
+    name: "Return temperature"
+    update_interval: 30s
+    accuracy_decimals: 2
+    icon: "mdi:temperature-celsius"
+
+  - platform: wifi_signal
+    name: ${upper_devicename} WiFi Signal
+    update_interval: 30s
+    unit_of_measurement: "dBa"
+    accuracy_decimals: 0
+    icon: "mdi:wifi"
+ 
+  - platform: uptime
+    name: ${upper_devicename} Uptime Sensor
+    id: uptime_sensor
+    internal: false
+    update_interval: 300s
+    icon: "mdi:timer"
+
+
+output:
+  - platform: gpio
+    pin: GPIO2
+    inverted: true
+    id: led_gpio
+
+switch:
+  - platform: output
+    output: led_gpio
+    name: "Led"
+    id: led_switch
+    icon: "mdi:lightbulb"
+
+script:
+  - id: blink_led
+    mode: single
+    then:
+      - switch.turn_on: led_switch
+      - delay: 300ms
+      - switch.turn_off: led_switch
