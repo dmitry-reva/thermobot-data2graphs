@@ -7,7 +7,7 @@
 - Считывает температуру с датчиков Dallas DS18B20 через one‑wire на GPIO0.
 - Показывает статус работы с помощью светодиода на GPIO2.
 - Передаёт в Home Assistant температуру подачи, обратки и (опционально) третьего и других датчиков.
-- Формирует понятный аптайм (дни/часы/минуты).
+- Формирует аптайм (в секундах).
 - Подаёт визуальный сигнал (мигание светодиода) при успешном подключении к Wi‑Fi.
 
 ## Аппаратная часть
@@ -31,20 +31,44 @@
 
 ## Прошивка (случай автора)
 
+<img src="write-bin.jpeg" alt="подключение Thermobot‑2 Mini через конвертер для первой прошивки" width="700">
+
+*Рисунок: Подключение Thermobot‑2 Mini через конвертер для первой прошивки*
+
 Команда для прошивки ESP8266 в командной строке Windows:
 
-
-```console
-esptool --chip esp8266 --port COM4 --baud 115200 write-flash --flash-mode qio --flash-size 4MB 0x00000 firmware.bin
+```CLI
+(venv) C:\esp\tools\python\v6.0.2\venv\Scripts>esptool --chip esp8266 --port COM4 --baud 115200 write-flash --flash-mode qio --flash-size 4MB 0x00000 firmware.bin
 ```
+
+Вывод успешной прошивки
+
+
+```
+esptool v5.3.1
+Connected to ESP8266 on COM4:
+Chip type:          ESP8266EX
+Features:           Wi-Fi, 160MHz
+Crystal frequency:  26MHz
+MAC:                48:fa:2f:6d:2c:36
+
+Stub flasher is already running. No upload is necessary.
+
+Configuring flash size...
+Flash parameters set to 0x0040.
+Flash will be erased from 0x00000000 to 0x00072fff...
+Wrote 467792 bytes (339484 compressed) at 0x00000000 in 30.6 seconds (122.5 kbit/s).
+Hash of data verified.
+
+Hard resetting via RTS pin...
+```
+
 
 Важные моменты:
 - замените COM4 на актуальный COM‑порт вашего устройства;
 - файл firmware.bin должен находиться в текущей рабочей директории либо укажите полный путь к нему.
 
-<img src="write-bin.jpeg" alt="подключение Thermobot‑2 Mini через конвертер для первой прошивки" width="700">
 
-*Рисунок: Подключение Thermobot‑2 Mini через конвертер для первой прошивки*
 
 
 ## Настройка
