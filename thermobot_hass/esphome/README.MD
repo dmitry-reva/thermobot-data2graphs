@@ -30,7 +30,7 @@
 
 ```CMD
 esptool --chip esp8266 --port COM4 --baud 115200 write-flash --flash-mode qio --flash-size 4MB 0x00000 firmware.bin
-
+```
 
 Важные моменты:
 - замените COM4 на актуальный COM‑порт вашего устройства;
