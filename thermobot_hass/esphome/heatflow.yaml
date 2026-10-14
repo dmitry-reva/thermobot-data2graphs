@@ -21,8 +21,8 @@ substitutions:
   web_server_pass: !secret web_server_pass
   api_key: !secret api_key
   # addresses ds18b20 (dallas_temp)
-  addr_supply: "0x00000000b34d1328"
-  addr_return: "0xb7000000cb2eb328"
+  addr_supply: "0x00000000b34d1328" #требует замены
+  addr_return: "0xb7000000cb2eb328" #требует замены
 
 esphome:
   name: ${devicename}
@@ -51,7 +51,7 @@ wifi:
   on_connect:
     then:
       - repeat:
-          count: 7
+          count: 4
           then:
             - script.execute: blink_led
             - delay: 300ms 
@@ -69,7 +69,8 @@ web_server:
     type: digest
     
 logger:
-  level: DEBUG
+  level: WARN
+  baud_rate: 0
 
 one_wire:
   - platform: gpio
@@ -81,6 +82,8 @@ sensor:
     one_wire_id: bus_gpio0
     address: ${addr_supply}
     name: "Supply temperature"
+    filters:
+      - lambda: return x + 3.5;
     update_interval: 30s
     accuracy_decimals: 2
     icon: "mdi:temperature-celsius"
@@ -95,11 +98,11 @@ sensor:
 
   - platform: wifi_signal
     name: ${upper_devicename} WiFi Signal
-    update_interval: 30s
-    unit_of_measurement: "dBa"
+    device_class: signal_strength
+    update_interval: 60s
+    unit_of_measurement: "dB"
     accuracy_decimals: 0
-    icon: "mdi:wifi"
- 
+     
   - platform: uptime
     name: ${upper_devicename} Uptime Sensor
     id: uptime_sensor
