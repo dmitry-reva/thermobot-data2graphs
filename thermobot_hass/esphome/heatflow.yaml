@@ -1,16 +1,18 @@
 # ==============================================================================
-# ESPHome Configuration (Base: heatflow.yaml, tested on ESPHome 2026.9.1)
-# NOTE: this extended version is not compiled/tested yet - verify on first build
+# ESPHome Configuration (Tested version: ESPHome 2026.9.1)
+# NOTE: sound level/frequency/duration and sensor calibration are new in this
+#       revision - verify on first build
 # ==============================================================================
 # Board:       Thermobot-2 Mini
 # Manufacturer: 42unita.ru (https://www.42unita.ru)
 # Device Name: HeatFlow
-# Purpose:     DS18B20 temperature sensing (supply/return), LED status indication,
-#              Wi‑Fi connectivity with boot/connect audible/visual alerts,
-#              temperature alarm (low/high thresholds) with repeating buzzer signal.
+# Purpose:     DS18B20 temperature sensing (supply/return) with manual calibration,
+#              LED status indication, Wi‑Fi connectivity with boot/connect
+#              audible/visual alerts, temperature alarm (low/high thresholds)
+#              with repeating buzzer signal.
 # Sensors:     Dallas DS18B20 (one‑wire) on GPIO0. Number of sensors is optional.
-# Outputs:     LED on GPIO2, passive buzzer on GPIO12 (same as original Thermobot:
-#              tone 3000 Hz / 100 ms)
+# Outputs:     LED on GPIO2, passive buzzer on GPIO12 (software PWM:
+#              adjustable volume, frequency and duration)
 # Inputs:      Button on GPIO14 (optional, remove the block if not fitted)
 # ==============================================================================
 
@@ -27,13 +29,19 @@ substitutions:
   # addresses ds18b20 (dallas_temp)
   addr_supply: "0x00000000b34d1328" #требует замены
   addr_return: "0xb7000000cb2eb328" #требует замены
-  # temperature alarm defaults (can be changed later from Home Assistant / web UI)
+  # manual calibration offsets, °C (adjustable later from Home Assistant / web UI)
+  # supply: 3.5 is the offset that was previously hard-coded in the sensor filter
+  cal_supply_default: "3.5"
+  cal_return_default: "0"
+  # temperature alarm defaults (adjustable later from Home Assistant / web UI)
   alarm_low_default: "5"
   alarm_high_default: "90"
   alarm_interval_default: "60"
-  # buzzer signal, same as original Thermobot: ~3000 Hz, 100 ms
-  # (RTTTL: f#7 = 2960 Hz, quarter note at 600 bpm = 100 ms)
-  buzzer_beep: "beep:d=4,o=7,b=600:f#"
+  # buzzer defaults (adjustable later from Home Assistant / web UI).
+  # Original Thermobot signal: 3000 Hz, 100 ms, 50 % duty (= volume 100 %)
+  sound_volume_default: "100"
+  sound_frequency_default: "3000"
+  sound_duration_default: "100"
 
 esphome:
   name: ${devicename}
@@ -91,13 +99,17 @@ one_wire:
     pin: GPIO0
 
 sensor:
+  # Calibration is applied to the raw reading: value = raw + "<sensor> calibration".
+  # A changed calibration takes effect from the next measurement (update_interval).
   - platform: dallas_temp
     one_wire_id: bus_gpio0
     address: ${addr_supply}
     name: "Supply temperature"
     id: supply_temp
     filters:
-      - lambda: return x + 3.5;
+      - lambda: |-
+          float c = id(cal_supply).state;
+          return std::isnan(c) ? x : x + c;
     update_interval: 30s
     accuracy_decimals: 2
     icon: "mdi:temperature-celsius"
@@ -107,6 +119,10 @@ sensor:
     address: ${addr_return}
     name: "Return temperature"
     id: return_temp
+    filters:
+      - lambda: |-
+          float c = id(cal_return).state;
+          return std::isnan(c) ? x : x + c;
     update_interval: 30s
     accuracy_decimals: 2
     icon: "mdi:temperature-celsius"
@@ -126,8 +142,8 @@ sensor:
     icon: "mdi:timer"
 
 binary_sensor:
-  # Alarm is active when any available DS18B20 is outside [low, high].
-  # A missing sensor (no state / NaN) never triggers the alarm.
+  # Alarm is active when any available DS18B20 (calibrated value) is outside
+  # [low, high]. A missing sensor (no state / NaN) never triggers the alarm.
   - platform: template
     name: "Temperature alarm"
     id: temp_alarm
@@ -158,6 +174,34 @@ binary_sensor:
     icon: "mdi:gesture-tap-button"
 
 number:
+  # --- manual calibration (offset added to the sensor reading) ---
+  - platform: template
+    name: "Supply calibration"
+    id: cal_supply
+    min_value: -10
+    max_value: 10
+    step: 0.1
+    unit_of_measurement: "°C"
+    mode: box
+    initial_value: ${cal_supply_default}
+    optimistic: true
+    restore_value: true
+    icon: "mdi:thermometer-plus"
+
+  - platform: template
+    name: "Return calibration"
+    id: cal_return
+    min_value: -10
+    max_value: 10
+    step: 0.1
+    unit_of_measurement: "°C"
+    mode: box
+    initial_value: ${cal_return_default}
+    optimistic: true
+    restore_value: true
+    icon: "mdi:thermometer-plus"
+
+  # --- temperature alarm ---
   - platform: template
     name: "Alarm low temperature"
     id: alarm_low
@@ -197,20 +241,60 @@ number:
     restore_value: true
     icon: "mdi:timer-sand"
 
+  # --- buzzer ---
+  # Volume is the amplitude of the signal: 100 % = 50 % PWM duty (maximum for a
+  # square wave), lower values narrow the pulses.
+  - platform: template
+    name: "Sound volume"
+    id: sound_volume
+    min_value: 0
+    max_value: 100
+    step: 1
+    unit_of_measurement: "%"
+    mode: slider
+    initial_value: ${sound_volume_default}
+    optimistic: true
+    restore_value: true
+    icon: "mdi:volume-medium"
+
+  # A piezo buzzer is loudest near its resonance frequency (usually 2-4 kHz):
+  # press "Beep test" and change this value to find the loudest point.
+  - platform: template
+    name: "Sound frequency"
+    id: sound_frequency
+    min_value: 500
+    max_value: 5000
+    step: 50
+    unit_of_measurement: "Hz"
+    mode: box
+    initial_value: ${sound_frequency_default}
+    optimistic: true
+    restore_value: true
+    icon: "mdi:sine-wave"
+
+  - platform: template
+    name: "Sound duration"
+    id: sound_duration
+    min_value: 20
+    max_value: 2000
+    step: 10
+    unit_of_measurement: "ms"
+    mode: box
+    initial_value: ${sound_duration_default}
+    optimistic: true
+    restore_value: true
+    icon: "mdi:timer-outline"
+
 output:
   - platform: gpio
     pin: GPIO2
     inverted: true
     id: led_gpio
 
-  # Passive buzzer (software PWM, frequency is set by RTTTL)
+  # Passive buzzer (software PWM; frequency and duty are set by script buzzer_tone)
   - platform: esp8266_pwm
     pin: GPIO12
     id: buzzer_out
-
-rtttl:
-  output: buzzer_out
-  id: buzzer
 
 switch:
   - platform: output
@@ -228,13 +312,14 @@ switch:
     icon: "mdi:volume-high"
 
 button:
+  # Test beep ignores the "Sound" mute switch
   - platform: template
     name: "Beep test"
     id: beep_test
     icon: "mdi:bell-ring"
     on_press:
       then:
-        - rtttl.play: ${buzzer_beep}
+        - script.execute: buzzer_tone
 
 script:
   - id: blink_led
@@ -244,6 +329,29 @@ script:
       - delay: 200ms
       - switch.turn_off: led_switch
 
+  # Plays one tone with the current volume / frequency / duration settings
+  - id: buzzer_tone
+    mode: single
+    then:
+      - output.esp8266_pwm.set_frequency:
+          id: buzzer_out
+          frequency: !lambda |-
+            float f = id(sound_frequency).state;
+            return std::isnan(f) ? 3000.0f : f;
+      - output.set_level:
+          id: buzzer_out
+          level: !lambda |-
+            float v = id(sound_volume).state;
+            if (std::isnan(v)) v = 100.0f;
+            // amplitude of a square wave ~ sin(pi * duty): volume 100 % -> duty 50 %
+            return std::asin(v / 100.0f) / 3.14159265f;
+      - delay: !lambda |-
+          float d = id(sound_duration).state;
+          return (uint32_t) (std::isnan(d) ? 100.0f : d);
+      - output.set_level:
+          id: buzzer_out
+          level: 0%
+
   # One short beep (respects the "Sound" switch)
   - id: beep
     mode: single
@@ -252,7 +360,7 @@ script:
           condition:
             switch.is_on: sound_enabled
           then:
-            - rtttl.play: ${buzzer_beep}
+            - script.execute: buzzer_tone
 
   # While the alarm is active: blink + beep, repeat every "Alarm repeat interval"
   - id: alarm_loop
