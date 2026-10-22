@@ -2,7 +2,7 @@
 
 Конфигурация для платы **Thermobot‑2 Mini** под задачи контроля температур в отопительных системах. Проект ориентирован на *почти простое* развёртывание и гибкую настройку.
 
-<img src="hass-esphome-graf.png" wigth="497" alt="Пример графика проекта thermobot_hass@esphome">
+![Пример графика проекта thermobot_hass@esphome](images/hass-esphome-graf.png)
 
 *Рисунок. Пример графика проекта thermobot_hass@esphome*
 
@@ -53,7 +53,7 @@
 - **Индикатор:** светодиод с инверсной логикой, пискун.
 - **Прошивка:** с адаптером USB‑UART на базе CH340G.
 
-<img src="PINOUT-MINI2.JPG" alt="Схема пинов для прошивки Thermobot‑2 Mini" width="700">
+![Схема пинов для прошивки Thermobot‑2 Mini](images/PINOUT-MINI2.JPG)
 
 *Рисунок: Схема пинов для прошивки Thermobot‑2 Mini.*
 
@@ -66,7 +66,8 @@
 
 ## Прошивка (случай автора)
 
-<img src="write-bin.jpeg" alt="подключение Thermobot‑2 Mini через адаптер USB‑UART для первой прошивки" width="700">
+![подключение Thermobot‑2 Mini через адаптер USB‑UART для первой прошивки](images/write-bin.jpeg)
+
 
 *Рисунок: Подключение Thermobot‑2 Mini локально через адаптер USB‑UART для первой прошивки*
 
