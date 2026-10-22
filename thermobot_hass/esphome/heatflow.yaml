@@ -1,13 +1,17 @@
 # ==============================================================================
-# ESPHome Configuration (Tested version: ESPHome 2026.9.1)
+# ESPHome Configuration (Base: heatflow.yaml, tested on ESPHome 2026.9.1)
+# NOTE: this extended version is not compiled/tested yet - verify on first build
 # ==============================================================================
 # Board:       Thermobot-2 Mini
 # Manufacturer: 42unita.ru (https://www.42unita.ru)
 # Device Name: HeatFlow
 # Purpose:     DS18B20 temperature sensing (supply/return), LED status indication,
-#              Wi‑Fi connectivity with boot/connect audible/visual alerts.
-# Sensors:     Dallas DS18B20 (one‑wire) оn GPIO0. Number of sensors is optional.
-# Outputs:     LED on GPIO2, buzzer (optional)
+#              Wi‑Fi connectivity with boot/connect audible/visual alerts,
+#              temperature alarm (low/high thresholds) with repeating buzzer signal.
+# Sensors:     Dallas DS18B20 (one‑wire) on GPIO0. Number of sensors is optional.
+# Outputs:     LED on GPIO2, passive buzzer on GPIO12 (same as original Thermobot:
+#              tone 3000 Hz / 100 ms)
+# Inputs:      Button on GPIO14 (optional, remove the block if not fitted)
 # ==============================================================================
 
 substitutions:
@@ -23,6 +27,13 @@ substitutions:
   # addresses ds18b20 (dallas_temp)
   addr_supply: "0x00000000b34d1328" #требует замены
   addr_return: "0xb7000000cb2eb328" #требует замены
+  # temperature alarm defaults (can be changed later from Home Assistant / web UI)
+  alarm_low_default: "5"
+  alarm_high_default: "90"
+  alarm_interval_default: "60"
+  # buzzer signal, same as original Thermobot: ~3000 Hz, 100 ms
+  # (RTTTL: f#7 = 2960 Hz, quarter note at 600 bpm = 100 ms)
+  buzzer_beep: "beep:d=4,o=7,b=600:f#"
 
 esphome:
   name: ${devicename}
@@ -31,6 +42,7 @@ esphome:
   on_boot:
     - then: 
         - script.execute: blink_led
+        - script.execute: beep
 
 esp8266:
   board: nodemcuv2
@@ -50,6 +62,7 @@ wifi:
     password: ${web_server_pass}
   on_connect:
     then:
+      - script.execute: beep
       - repeat:
           count: 4
           then:
@@ -82,6 +95,7 @@ sensor:
     one_wire_id: bus_gpio0
     address: ${addr_supply}
     name: "Supply temperature"
+    id: supply_temp
     filters:
       - lambda: return x + 3.5;
     update_interval: 30s
@@ -92,6 +106,7 @@ sensor:
     one_wire_id: bus_gpio0
     address: ${addr_return}
     name: "Return temperature"
+    id: return_temp
     update_interval: 30s
     accuracy_decimals: 2
     icon: "mdi:temperature-celsius"
@@ -110,12 +125,92 @@ sensor:
     update_interval: 300s
     icon: "mdi:timer"
 
+binary_sensor:
+  # Alarm is active when any available DS18B20 is outside [low, high].
+  # A missing sensor (no state / NaN) never triggers the alarm.
+  - platform: template
+    name: "Temperature alarm"
+    id: temp_alarm
+    device_class: problem
+    icon: "mdi:thermometer-alert"
+    lambda: |-
+      auto out_of_range = [](float t, float lo, float hi) {
+        return !std::isnan(t) && (t < lo || t > hi);
+      };
+      float lo = id(alarm_low).state;
+      float hi = id(alarm_high).state;
+      return out_of_range(id(supply_temp).state, lo, hi) ||
+             out_of_range(id(return_temp).state, lo, hi);
+    on_press:
+      then:
+        - script.execute: alarm_loop
+
+  # Optional hardware button (Thermobot: GPIO14, input with pull-up, active low)
+  - platform: gpio
+    name: "Button"
+    id: button_gpio14
+    pin:
+      number: GPIO14
+      mode: INPUT_PULLUP
+      inverted: true
+    filters:
+      - delayed_on_off: 50ms
+    icon: "mdi:gesture-tap-button"
+
+number:
+  - platform: template
+    name: "Alarm low temperature"
+    id: alarm_low
+    min_value: -55
+    max_value: 125
+    step: 0.5
+    unit_of_measurement: "°C"
+    mode: box
+    initial_value: ${alarm_low_default}
+    optimistic: true
+    restore_value: true
+    icon: "mdi:thermometer-low"
+
+  - platform: template
+    name: "Alarm high temperature"
+    id: alarm_high
+    min_value: -55
+    max_value: 125
+    step: 0.5
+    unit_of_measurement: "°C"
+    mode: box
+    initial_value: ${alarm_high_default}
+    optimistic: true
+    restore_value: true
+    icon: "mdi:thermometer-high"
+
+  - platform: template
+    name: "Alarm repeat interval"
+    id: alarm_interval
+    min_value: 1
+    max_value: 86400
+    step: 1
+    unit_of_measurement: "s"
+    mode: box
+    initial_value: ${alarm_interval_default}
+    optimistic: true
+    restore_value: true
+    icon: "mdi:timer-sand"
 
 output:
   - platform: gpio
     pin: GPIO2
     inverted: true
     id: led_gpio
+
+  # Passive buzzer (software PWM, frequency is set by RTTTL)
+  - platform: esp8266_pwm
+    pin: GPIO12
+    id: buzzer_out
+
+rtttl:
+  output: buzzer_out
+  id: buzzer
 
 switch:
   - platform: output
@@ -124,6 +219,23 @@ switch:
     id: led_switch
     icon: "mdi:lightbulb"
 
+  # Master mute for boot/connect/alarm beeps
+  - platform: template
+    name: "Sound"
+    id: sound_enabled
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    icon: "mdi:volume-high"
+
+button:
+  - platform: template
+    name: "Beep test"
+    id: beep_test
+    icon: "mdi:bell-ring"
+    on_press:
+      then:
+        - rtttl.play: ${buzzer_beep}
+
 script:
   - id: blink_led
     mode: single
@@ -131,3 +243,25 @@ script:
       - switch.turn_on: led_switch
       - delay: 200ms
       - switch.turn_off: led_switch
+
+  # One short beep (respects the "Sound" switch)
+  - id: beep
+    mode: single
+    then:
+      - if:
+          condition:
+            switch.is_on: sound_enabled
+          then:
+            - rtttl.play: ${buzzer_beep}
+
+  # While the alarm is active: blink + beep, repeat every "Alarm repeat interval"
+  - id: alarm_loop
+    mode: single
+    then:
+      - while:
+          condition:
+            binary_sensor.is_on: temp_alarm
+          then:
+            - script.execute: blink_led
+            - script.execute: beep
+            - delay: !lambda 'return (uint32_t) (id(alarm_interval).state * 1000);'

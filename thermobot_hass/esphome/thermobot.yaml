@@ -1,14 +1,16 @@
 ## ESPHome-конфиг, воспроизводящий функции прошивки THERMOBOT (ESP8266 + DS18B20 + Telegram)
-## Пины: GPIO0 - DS18B20 (подтверждено на плате), GPIO4/5 - TM1637 CLK/DIO, GPIO14 - кнопка, GPIO2 - зуммер (полярность проверить).
+## Пины: GPIO0 - DS18B20 (подтверждено на плате), GPIO2 - светодиод (инверсный), GPIO4/5 - TM1637 CLK/DIO,
+## GPIO12 - зуммер (tone 3000 Гц / 100 мс, найдено в прошивке), GPIO14 - кнопка.
 
 substitutions:
   name: thermobot
   # DATA датчика DS18B20 (проверено на плате). GPIO0 - strapping-пин: подтяжка 4.7k к 3.3V
   # нормальна (загрузка из флеша), но датчик не должен тянуть линию к земле при старте.
   pin_ds18b20: GPIO0
-  # Найдено в прошивке (вывод pinMode(OUTPUT) + digitalWrite(HIGH) при старте, переменная = 2).
-  # GPIO2 - strapping-пин: при загрузке должен быть HIGH.
-  pin_buzzer: GPIO2
+  # Светодиод, активный низкий уровень (проверено). GPIO2 - strapping-пин: при загрузке должен быть HIGH.
+  pin_led: GPIO2
+  # Зуммер: в прошивке вызов tone(pin, 3000, 100), пин берётся из переменной @0x3ffe85c8 = 12
+  pin_buzzer: GPIO12
   # Дисплей TM1637: TM1637Display(CLK=4, DIO=5, bitDelay=100) - найден в статическом инициализаторе
   pin_tm_clk: GPIO4
   pin_tm_dio: GPIO5
@@ -106,14 +108,24 @@ switch:
     id: sound_enabled
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
+  - platform: output
+    output: led_gpio
+    name: "Led"
+    id: led_switch
+    icon: "mdi:lightbulb"
+
+output:
   - platform: gpio
-    id: buzzer
-    pin:
-      number: ${pin_buzzer}
-      inverted: true        # в прошивке на старте пин HIGH = тишина (активный низкий уровень).
-                            # Если зуммер пищит при включении или звук инвертирован - уберите inverted.
-    restore_mode: ALWAYS_OFF
-    internal: true
+    pin: ${pin_led}
+    inverted: true
+    id: led_gpio
+  # Зуммер: оригинал вызывает tone(пин, 3000 Гц, 100 мс)
+  - platform: esp8266_pwm
+    pin: ${pin_buzzer}
+    id: buzzer_out
+
+rtttl:
+  output: buzzer_out     # нота fis7 ~ 2960 Гц, 1/4 при 600 bpm = 100 мс (аналог tone(…, 3000, 100))
 
 globals:
   - id: last_alert_ms
@@ -183,9 +195,7 @@ script:
           condition:
             switch.is_on: sound_enabled
           then:
-            - switch.turn_on: buzzer
-            - delay: 500ms
-            - switch.turn_off: buzzer
+            - rtttl.play: "beep:d=4,o=7,b=600:f#"
       - http_request.get:
           verify_ssl: false
           url: !lambda |-
