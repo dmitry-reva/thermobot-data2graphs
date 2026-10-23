@@ -4,7 +4,7 @@
 
 ***Обратите внимание** на предположение, что описанные устройства более не будут доступны к покупке и представляют интерес только для настоящих владельцев.*
 
-<img src="thermobot_hass/esphome/hass-esphome-graf.png" wigth="497" alt="Пример графика проекта thermobot_hass@esphome">
+![Пример графика проекта thermobot_hass@esphome](thermobot_hass/esphome/images/hass-esphome-graf.png)
 
 *Рисунок. Пример графика проекта thermobot_hass@esphome*
 
@@ -12,7 +12,7 @@
 ## История проекта
 
 - **Эра до Home Assistant:** с оригинальной прошивкой производителя собирал сырые данные через web-интерфейс и строил графики (работа скриптов протестирована и эксплуатировалась для артикулов: Thermobot-2.2,  Thermobot-2 Mini). 
-- **Эра c Home Assistant:** с оригинальной прошивкой производителя [собирал данные через RestAPI](thermobot_hass/README.md).
+- **Эра c Home Assistant:** с оригинальной прошивкой производителя [собирал данные через RestAPI](thermobot_hass/RestAPI/README.md).
 - **Эра c Home Assistant и ESPHome:** [использую собственную прошивку ESPHome и конфигурацию устройства Thermobot-2 Mini](thermobot_hass/esphome/README.MD)
 
 
@@ -24,7 +24,7 @@
 - строить графики изменения температуры во времени;
 - экспортировать графики в PNG/SVG.
 
-<img src="thermobot_graf/newplot.png" wigth="500" alt="Пример графика архивного проекта thermobot_graf">
+![Пример графика архивного проекта thermobot_graf](thermobot_graf/newplot.png)
 
 *Рисунок. Пример графика архивного проекта thermobot_graf*
 
