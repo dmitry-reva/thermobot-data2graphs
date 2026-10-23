@@ -1,0 +1,8 @@
+# ESPHome secrets and build artifacts
+thermobot_hass/esphome/secrets.yaml
+thermobot_hass/esphome/.esphome/
+.esphome/
+*.bin
+__pycache__/
+venv/
+.venv/

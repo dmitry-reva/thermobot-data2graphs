@@ -1,19 +1,21 @@
 # ==============================================================================
 # ESPHome Configuration (Tested version: ESPHome 2026.9.1)
+# Recommended after testing: ESPHome 2026.10+ (native ESP8266 builds,
+# compressed OTA). See README.md for the upgrade notes.
 # NOTE: sound level/frequency/duration and sensor calibration are new in this
-#       revision - verify on first build
+#       revision - verify on first build.
 # ==============================================================================
 # Board:       Thermobot-2 Mini
 # Manufacturer: 42unita.ru (https://www.42unita.ru)
 # Device Name: HeatFlow
 # Purpose:     DS18B20 temperature sensing (supply/return) with manual calibration,
-#              LED status indication, Wi‑Fi connectivity with boot/connect
-#              audible/visual alerts, temperature alarm (low/high thresholds)
-#              with repeating buzzer signal.
-# Sensors:     Dallas DS18B20 (one‑wire) on GPIO0. Number of sensors is optional.
+#              LED status indication, Wi-Fi connectivity with boot/connect
+#              audible/visual alerts, per-sensor temperature alarm (low/high)
+#              with repeating buzzer signal and acknowledge button.
+# Sensors:     Dallas DS18B20 (one-wire) on GPIO0. Number of sensors is optional.
 # Outputs:     LED on GPIO2, passive buzzer on GPIO12 (software PWM:
 #              adjustable volume, frequency and duration)
-# Inputs:      Button on GPIO14 (optional, remove the block if not fitted)
+# Inputs:      Button on GPIO14 (optional; short click acknowledges the alarm)
 # ==============================================================================
 
 substitutions:
@@ -33,9 +35,11 @@ substitutions:
   # supply: 3.5 is the offset that was previously hard-coded in the sensor filter
   cal_supply_default: "3.5"
   cal_return_default: "0"
-  # temperature alarm defaults (adjustable later from Home Assistant / web UI)
-  alarm_low_default: "5"
-  alarm_high_default: "90"
+  # temperature alarm defaults per sensor, °C (adjustable later from HA / web UI)
+  alarm_supply_low_default: "5"
+  alarm_supply_high_default: "90"
+  alarm_return_low_default: "5"
+  alarm_return_high_default: "90"
   alarm_interval_default: "60"
   # buzzer defaults (adjustable later from Home Assistant / web UI).
   # Original Thermobot signal: 3000 Hz, 100 ms, 50 % duty (= volume 100 %)
@@ -47,24 +51,47 @@ esphome:
   name: ${devicename}
   friendly_name: ${devicefriendlyname}
   name_add_mac_suffix: false
+  comment: "Thermobot-2 Mini: supply/return DS18B20, per-sensor alarm, buzzer, LED"
+  # Set this to the area that is actually used in Home Assistant.
+  area: "Heating"
+  project:
+    name: "dmitry-reva.thermobot_data2graphs"
+    version: "1.2.0"
+  min_version: "2026.9.1"
   on_boot:
-    - then: 
+    - then:
         - script.execute: blink_led
         - script.execute: beep
 
 esp8266:
   board: nodemcuv2
+  # Required for restore_value/restore_mode to survive a power loss on ESP8266.
+  # Default flash_write_interval in the preferences component is 1 minute.
+  restore_from_flash: true
 
 api:
   encryption:
     key: ${api_key}
+  # Do not reboot the device just because Home Assistant is temporarily down.
+  # Wi-Fi recovery is still handled by wifi.reboot_timeout (default 15 min).
+  reboot_timeout: 0s
 
 ota:
   - platform: esphome
+    # No legacy OTA password: on a trusted LAN the API channel is already
+    # encrypted. On ESPHome 2026.9+ encrypted OTA uses the API key; check the
+    # OTA docs for your exact version before adding a password.
+
+safe_mode:
 
 wifi:
   ssid: ${wifi_ssid}
   password: ${wifi_pass}
+  # Optional static IP. A DHCP reservation on the router is usually simpler.
+  # manual_ip:
+  #   static_ip: 192.168.100.50
+  #   gateway: 192.168.100.1
+  #   subnet: 255.255.255.0
   ap:
     ssid: ${devicefriendlyname}
     password: ${web_server_pass}
@@ -75,7 +102,7 @@ wifi:
           count: 4
           then:
             - script.execute: blink_led
-            - delay: 300ms 
+            - delay: 300ms
 
 captive_portal:
 
@@ -88,7 +115,7 @@ web_server:
     username: ${web_server_user}
     password: ${web_server_pass}
     type: digest
-    
+
 logger:
   level: WARN
   baud_rate: 0
@@ -107,6 +134,10 @@ sensor:
     name: "Supply temperature"
     id: supply_temp
     filters:
+      # Optional smoothing (adds lag; do not enable for alarm-critical values):
+      # - median:
+      #     window_size: 5
+      #     send_every: 5
       - lambda: |-
           float c = id(cal_supply).state;
           return std::isnan(c) ? x : x + c;
@@ -120,6 +151,7 @@ sensor:
     name: "Return temperature"
     id: return_temp
     filters:
+      # Optional smoothing (see the note above).
       - lambda: |-
           float c = id(cal_return).state;
           return std::isnan(c) ? x : x + c;
@@ -127,43 +159,87 @@ sensor:
     accuracy_decimals: 2
     icon: "mdi:temperature-celsius"
 
+  # dBm, signal_strength, measurement and diagnostic are the platform defaults.
   - platform: wifi_signal
-    name: ${upper_devicename} WiFi Signal
+    name: "WiFi Signal"
     device_class: signal_strength
     update_interval: 60s
-    unit_of_measurement: "dB"
     accuracy_decimals: 0
-     
+
   - platform: uptime
-    name: ${upper_devicename} Uptime Sensor
+    name: "Uptime"
     id: uptime_sensor
     internal: false
     update_interval: 300s
     icon: "mdi:timer"
 
+  # Difference between supply and return; useful for heating diagnostics.
+  - platform: template
+    name: "Delta temperature"
+    id: delta_temp
+    unit_of_measurement: "°C"
+    device_class: temperature_delta
+    state_class: measurement
+    accuracy_decimals: 2
+    update_interval: 30s
+    icon: "mdi:thermometer-chevron-up"
+    lambda: |-
+      if (std::isnan(id(supply_temp).state) || std::isnan(id(return_temp).state)) {
+        return NAN;
+      }
+      return id(supply_temp).state - id(return_temp).state;
+
 binary_sensor:
   # Alarm is active when any available DS18B20 (calibrated value) is outside
-  # [low, high]. A missing sensor (no state / NaN) never triggers the alarm.
+  # its own [low, high] range. A missing sensor (NaN) never triggers this alarm;
+  # it is reported by "Temperature sensor fault" below instead.
   - platform: template
     name: "Temperature alarm"
     id: temp_alarm
     device_class: problem
     icon: "mdi:thermometer-alert"
+    # Fire on the first valid state too, otherwise a reboot while already in
+    # alarm would not start alarm_loop.
+    trigger_on_initial_state: true
+    filters:
+      - delayed_on: 5s
+      - delayed_off: 30s
     lambda: |-
       auto out_of_range = [](float t, float lo, float hi) {
         return !std::isnan(t) && (t < lo || t > hi);
       };
-      float lo = id(alarm_low).state;
-      float hi = id(alarm_high).state;
-      return out_of_range(id(supply_temp).state, lo, hi) ||
-             out_of_range(id(return_temp).state, lo, hi);
+      return out_of_range(id(supply_temp).state,
+                          id(alarm_supply_low).state,
+                          id(alarm_supply_high).state) ||
+             out_of_range(id(return_temp).state,
+                          id(alarm_return_low).state,
+                          id(alarm_return_high).state);
     on_press:
       then:
         - script.execute: alarm_loop
+    on_release:
+      then:
+        - script.execute: stop_alarm
 
-  # Optional hardware button (Thermobot: GPIO14, input with pull-up, active low)
+  # dallas_temp publishes NAN when a probe cannot be read. This entity makes
+  # that condition visible in Home Assistant and available for notifications.
+  - platform: template
+    name: "Temperature sensor fault"
+    id: sensor_fault
+    device_class: problem
+    icon: "mdi:thermometer-off"
+    lambda: |-
+      return std::isnan(id(supply_temp).state) ||
+             std::isnan(id(return_temp).state);
+    filters:
+      # Ignore the first 90 s after boot while both probes are still starting.
+      - delayed_on: 90s
+      - delayed_off: 30s
+
+  # Optional hardware button (Thermobot: GPIO14, input with pull-up, active low).
+  # A short click acknowledges (silences) the local alarm.
   - platform: gpio
-    name: "Button"
+    name: "Physical button"
     id: button_gpio14
     pin:
       number: GPIO14
@@ -171,7 +247,22 @@ binary_sensor:
       inverted: true
     filters:
       - delayed_on_off: 50ms
+    entity_category: diagnostic
+    disabled_by_default: true
     icon: "mdi:gesture-tap-button"
+    on_click:
+      min_length: 50ms
+      max_length: 1s
+      then:
+        - if:
+            condition:
+              binary_sensor.is_on: temp_alarm
+            then:
+              - script.execute: stop_alarm
+
+  - platform: status
+    name: "Status"
+    entity_category: diagnostic
 
 number:
   # --- manual calibration (offset added to the sensor reading) ---
@@ -186,6 +277,7 @@ number:
     initial_value: ${cal_supply_default}
     optimistic: true
     restore_value: true
+    entity_category: config
     icon: "mdi:thermometer-plus"
 
   - platform: template
@@ -199,33 +291,68 @@ number:
     initial_value: ${cal_return_default}
     optimistic: true
     restore_value: true
+    entity_category: config
     icon: "mdi:thermometer-plus"
 
-  # --- temperature alarm ---
+  # --- temperature alarm, separate thresholds per sensor ---
   - platform: template
-    name: "Alarm low temperature"
-    id: alarm_low
+    name: "Supply alarm low"
+    id: alarm_supply_low
     min_value: -55
     max_value: 125
-    step: 0.5
+    step: 0.1
     unit_of_measurement: "°C"
+    device_class: temperature
     mode: box
-    initial_value: ${alarm_low_default}
+    initial_value: ${alarm_supply_low_default}
     optimistic: true
     restore_value: true
+    entity_category: config
     icon: "mdi:thermometer-low"
 
   - platform: template
-    name: "Alarm high temperature"
-    id: alarm_high
+    name: "Supply alarm high"
+    id: alarm_supply_high
     min_value: -55
     max_value: 125
-    step: 0.5
+    step: 0.1
     unit_of_measurement: "°C"
+    device_class: temperature
     mode: box
-    initial_value: ${alarm_high_default}
+    initial_value: ${alarm_supply_high_default}
     optimistic: true
     restore_value: true
+    entity_category: config
+    icon: "mdi:thermometer-high"
+
+  - platform: template
+    name: "Return alarm low"
+    id: alarm_return_low
+    min_value: -55
+    max_value: 125
+    step: 0.1
+    unit_of_measurement: "°C"
+    device_class: temperature
+    mode: box
+    initial_value: ${alarm_return_low_default}
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    icon: "mdi:thermometer-low"
+
+  - platform: template
+    name: "Return alarm high"
+    id: alarm_return_high
+    min_value: -55
+    max_value: 125
+    step: 0.1
+    unit_of_measurement: "°C"
+    device_class: temperature
+    mode: box
+    initial_value: ${alarm_return_high_default}
+    optimistic: true
+    restore_value: true
+    entity_category: config
     icon: "mdi:thermometer-high"
 
   - platform: template
@@ -235,10 +362,12 @@ number:
     max_value: 86400
     step: 1
     unit_of_measurement: "s"
+    device_class: duration
     mode: box
     initial_value: ${alarm_interval_default}
     optimistic: true
     restore_value: true
+    entity_category: config
     icon: "mdi:timer-sand"
 
   # --- buzzer ---
@@ -255,6 +384,7 @@ number:
     initial_value: ${sound_volume_default}
     optimistic: true
     restore_value: true
+    entity_category: config
     icon: "mdi:volume-medium"
 
   # A piezo buzzer is loudest near its resonance frequency (usually 2-4 kHz):
@@ -266,10 +396,12 @@ number:
     max_value: 5000
     step: 50
     unit_of_measurement: "Hz"
+    device_class: frequency
     mode: box
     initial_value: ${sound_frequency_default}
     optimistic: true
     restore_value: true
+    entity_category: config
     icon: "mdi:sine-wave"
 
   - platform: template
@@ -279,10 +411,12 @@ number:
     max_value: 2000
     step: 10
     unit_of_measurement: "ms"
+    device_class: duration
     mode: box
     initial_value: ${sound_duration_default}
     optimistic: true
     restore_value: true
+    entity_category: config
     icon: "mdi:timer-outline"
 
 output:
@@ -299,8 +433,9 @@ output:
 switch:
   - platform: output
     output: led_gpio
-    name: "Led"
+    name: "LED"
     id: led_switch
+    entity_category: config
     icon: "mdi:lightbulb"
 
   # Master mute for boot/connect/alarm beeps
@@ -309,7 +444,16 @@ switch:
     id: sound_enabled
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
+    entity_category: config
     icon: "mdi:volume-high"
+    on_turn_off:
+      then:
+        # Stop a tone that is already playing; otherwise it would finish even
+        # though the user just muted the device.
+        - script.stop: buzzer_tone
+        - output.set_level:
+            id: buzzer_out
+            level: 0%
 
 button:
   # Test beep ignores the "Sound" mute switch
@@ -317,9 +461,50 @@ button:
     name: "Beep test"
     id: beep_test
     icon: "mdi:bell-ring"
+    entity_category: diagnostic
     on_press:
       then:
         - script.execute: buzzer_tone
+
+  # Silences the local alarm until the temperature returns to normal.
+  # The "Temperature alarm" entity in Home Assistant stays on.
+  - platform: template
+    name: "Acknowledge alarm"
+    id: ack_alarm
+    icon: "mdi:bell-off"
+    entity_category: diagnostic
+    on_press:
+      then:
+        - if:
+            condition:
+              binary_sensor.is_on: temp_alarm
+            then:
+              - script.execute: stop_alarm
+
+  - platform: restart
+    name: "Restart"
+    entity_category: diagnostic
+
+  - platform: safe_mode
+    name: "Safe mode"
+    entity_category: diagnostic
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+      entity_category: diagnostic
+    ssid:
+      name: "SSID"
+      entity_category: diagnostic
+    bssid:
+      name: "BSSID"
+      entity_category: diagnostic
+
+  - platform: version
+    name: "ESPHome Version"
+    entity_category: diagnostic
+    disabled_by_default: true
 
 script:
   - id: blink_led
@@ -373,3 +558,17 @@ script:
             - script.execute: blink_led
             - script.execute: beep
             - delay: !lambda 'return (uint32_t) (id(alarm_interval).state * 1000);'
+
+  # Safe stop used by "Acknowledge alarm", the physical button and on_release.
+  # Stopping scripts alone could leave the PWM output at a non-zero duty, so
+  # explicitly set it to 0 % afterwards.
+  - id: stop_alarm
+    mode: restart
+    then:
+      - script.stop: alarm_loop
+      - script.stop: beep
+      - script.stop: buzzer_tone
+      - output.set_level:
+          id: buzzer_out
+          level: 0%
+      - switch.turn_off: led_switch

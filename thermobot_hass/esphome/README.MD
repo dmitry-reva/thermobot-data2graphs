@@ -115,18 +115,21 @@ Hard resetting via RTS pin...
 
 ### Секреты
 
-В файле `secrets.yaml` укажите:
+Скопируйте `secrets.example.yaml` в `secrets.yaml` и заполните значения:
+
 ```yaml
-wifi_0f: "ssid_вашей_сети_2.1GHz"
-wifi_password: "пароль_вашей_сети_2.1GHz"
+wifi_0f: "ssid_вашей_сети_2.4GHz"
+wifi_password: "пароль_вашей_сети_2.4GHz"
 web_server_pass: "пароль_для_веб_интерфейса"
 api_key: "api_ключ_для_home_assistant"
 ```
 
+`secrets.yaml` исключён в корневом `.gitignore` и не должен попадать в git.
+
 ## Развитие проекта
 
-Для сведения привожу yaml прошивки после реверсинжиниринга оригинального дампа (автором не тестировалась, но соответсвует по GPIO) [thetmobot.yaml](thermobot.yaml)
+Для сведения привожу yaml прошивки после реверсинжиниринга оригинального дампа (автором не тестировалась, но соответствует по GPIO) [thermobot.yaml](thermobot.yaml)
 
 ### Обновление прошивки
 
-Используйте интерфейсы ESPHome API или web по адресу mDNS в локальной сети: [heatflow.local](http://heatflow.local), либо IP
+Используйте интерфейсы ESPHome API или web по адресу mDNS в локальной сети: [heatflow.local](http://heatflow.local), либо IP.
