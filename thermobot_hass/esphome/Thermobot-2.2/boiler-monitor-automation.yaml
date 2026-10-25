@@ -1,0 +1,24 @@
+# Автоматизация: уведомление о тревоге (HA 2024.10+ синтаксис).
+# Замените notify.notify на вашу службу, например notify.mobile_app_<телефон>.
+alias: Boiler Monitor - температурная тревога
+description: Сообщает, какие датчики вышли за границы
+mode: single
+triggers:
+  - trigger: state
+    entity_id: binary_sensor.boiler_monitor_temperature_alarm
+    to: "on"
+    for: "00:00:30"
+actions:
+  - action: notify.notify
+    data:
+      title: "Котёл: температурная тревога"
+      message: >-
+        {% set items = [
+          ('Улица', 'binary_sensor.boiler_monitor_outdoor_alarm', 'sensor.boiler_monitor_outdoor_temperature'),
+          ('Подача', 'binary_sensor.boiler_monitor_supply_alarm', 'sensor.boiler_monitor_supply_temperature'),
+          ('Возврат', 'binary_sensor.boiler_monitor_return_alarm', 'sensor.boiler_monitor_return_temperature'),
+          ('Шнек', 'binary_sensor.boiler_monitor_auger_alarm', 'sensor.boiler_monitor_auger_temperature'),
+          ('Бункер', 'binary_sensor.boiler_monitor_hopper_alarm', 'sensor.boiler_monitor_hopper_air_temperature')] %}
+        {% for name, alarm, temp in items if is_state(alarm, 'on') -%}
+        {{ name }}: {{ states(temp) }} °C{{ ', ' if not loop.last else '' }}
+        {%- endfor %}

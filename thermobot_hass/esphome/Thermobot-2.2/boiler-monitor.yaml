@@ -1,0 +1,985 @@
+# ==============================================================================
+# ESPHome Configuration (Base style: heatflow_1.yaml, ESPHome 2026.9.1+)
+# NOTE: new device configuration, not compiled yet - verify on first build.
+# Recommended: ESPHome 2026.10+ (native ESP8266 builds, compressed OTA).
+# ==============================================================================
+# Board:       Thermobot-2.2
+# Manufacturer: 42unita.ru (https://www.42unita.ru)
+# Device Name: Boiler Monitor
+# Purpose:     Solid-fuel boiler monitoring: 5 x DS18B20 (outdoor air, supply,
+#              return, auger, hopper air) with manual calibration per sensor,
+#              3-digit 7-segment display with automatic sensor carousel,
+#              per-sensor temperature alarm (low/high) with repeating buzzer
+#              signal, LED status indication, Wi-Fi connectivity with
+#              boot/connect audible/visual alerts.
+# Sensors:     5 x Dallas DS18B20 (one-wire) on GPIO0, addressed individually.
+# Outputs:     LED on GPIO2, passive buzzer on GPIO12 (software PWM: adjustable
+#              volume, frequency and duration), TM1637 3-digit display on
+#              GPIO4 (CLK) / GPIO5 (DIO).
+# Inputs:      None: the device has no hardware buttons. The display is
+#              controlled from Home Assistant / the web UI (see below).
+# ==============================================================================
+# Display (no buttons -> fully automatic, configured through entities):
+#   * Lamp test "888" for 1.5 s after power-up.
+#   * "Display mode" = Auto: every sensor is shown in turn. Each page is a short
+#     LABEL (Out / SUP / rEt / Aug / Hop) followed by the VALUE, e.g. "23.5".
+#     The page time is set with "Display page time".
+#   * "Display mode" = Outdoor / Supply / Return / Auger / Hopper: only that
+#     sensor is shown (its label is still flashed periodically).
+#   * Alarm override: while any sensor is out of its limits the display shows
+#     only the sensors in alarm, and their value BLINKS. This works in every
+#     mode, so a fixed page can never hide an alarm.
+#   * A sensor that cannot be read shows "---" during the first 20 s after boot
+#     and "Err" afterwards.
+#   * Values: -9.9...99.9 with one decimal, otherwise rounded to an integer.
+#   * "Display brightness" (1-8) is adjustable.
+# ==============================================================================
+# DS18B20 addresses: all five sensors share one bus, so each needs its address.
+# Temporarily set "logger: level: DEBUG", flash, read the addresses from the
+# log (connect the sensors one by one to know which is which), write them to
+# the addr_* substitutions below and restore "level: WARN".
+# ==============================================================================
+
+substitutions:
+  devicename: boiler-monitor
+  upper_devicename: Boiler
+  model: Monitor
+  devicefriendlyname: ${upper_devicename} ${model}
+  wifi_ssid: !secret wifi_0f
+  wifi_pass: !secret wifi_password
+  web_server_user: ${devicename}
+  web_server_pass: !secret web_server_pass
+  api_key: !secret api_key
+
+  # --- Thermobot-2.2 pins (same as the Thermobot-2 Mini hardware) ---
+  # GPIO0 (strapping): 1-Wire line, 4.7 kOhm pull-up to 3.3 V is mandatory.
+  pin_onewire: GPIO0
+  # GPIO2 (strapping): LED, inverted logic, must be HIGH at boot.
+  pin_led: GPIO2
+  # GPIO12: passive buzzer.
+  pin_buzzer: GPIO12
+  # GPIO4 / GPIO5: TM1637 CLK / DIO.
+  pin_tm_clk: GPIO4
+  pin_tm_dio: GPIO5
+
+  # addresses ds18b20 (dallas_temp)
+  addr_outdoor: "0x0000000000000128" #требует замены
+  addr_supply: "0x0000000000000228" #требует замены
+  addr_return: "0x0000000000000328" #требует замены
+  addr_auger: "0x0000000000000428" #требует замены
+  addr_hopper: "0x0000000000000528" #требует замены
+
+  temp_update_interval: 10s
+
+  # manual calibration offsets per sensor, °C (adjustable later from HA / web UI)
+  cal_outdoor_default: "0"
+  cal_supply_default: "0"
+  cal_return_default: "0"
+  cal_auger_default: "0"
+  cal_hopper_default: "0"
+
+  # temperature alarm defaults per sensor, °C (adjustable later from HA / web UI).
+  # -55 / 125 is the whole DS18B20 range, i.e. that limit never triggers.
+  # Auger and hopper limits are only starting values: set them according to the
+  # boiler manual (overheating of the auger / hopper means a burn-back risk).
+  alarm_outdoor_low_default: "-55"
+  alarm_outdoor_high_default: "125"
+  alarm_supply_low_default: "5"
+  alarm_supply_high_default: "90"
+  alarm_return_low_default: "5"
+  alarm_return_high_default: "90"
+  alarm_auger_low_default: "-55"
+  alarm_auger_high_default: "60"
+  alarm_hopper_low_default: "-55"
+  alarm_hopper_high_default: "50"
+  alarm_interval_default: "60"
+
+  # buzzer defaults (adjustable later from Home Assistant / web UI).
+  # Original Thermobot signal: 3000 Hz, 100 ms, 50 % duty (= volume 100 %)
+  sound_volume_default: "100"
+  sound_frequency_default: "3000"
+  sound_duration_default: "100"
+
+  # display defaults (adjustable later from Home Assistant / web UI)
+  display_page_time_default: "3"
+  display_brightness_default: "6"
+  # Time the sensor label is shown before its value, ms.
+  display_label_ms: "1000"
+  # Set to "true" if the display module is mounted upside down.
+  display_inverted: "false"
+  # Sensor labels: at most 3 characters (3-digit display).
+  label_outdoor: "Out"
+  label_supply: "SUP"
+  label_return: "rEt"
+  label_auger: "Aug"
+  label_hopper: "Hop"
+
+esphome:
+  name: ${devicename}
+  friendly_name: ${devicefriendlyname}
+  name_add_mac_suffix: false
+  comment: "Thermobot-2.2: 5 x DS18B20, 3-digit display, per-sensor alarm, buzzer, LED"
+  # Set this to the area that is actually used in Home Assistant.
+  area: "Boiler room"
+  project:
+    name: "dmitry-reva.thermobot_boiler_monitor"
+    version: "1.0.0"
+  min_version: "2026.9.1"
+  on_boot:
+    - then:
+        - script.execute: blink_led
+        - script.execute: beep
+
+esp8266:
+  board: nodemcuv2
+  # Required for restore_value/restore_mode to survive a power loss on ESP8266.
+  # Default flash_write_interval in the preferences component is 1 minute.
+  restore_from_flash: true
+
+api:
+  encryption:
+    key: ${api_key}
+  # Do not reboot the device just because Home Assistant is temporarily down.
+  # Wi-Fi recovery is still handled by wifi.reboot_timeout (default 15 min).
+  reboot_timeout: 0s
+
+ota:
+  - platform: esphome
+    # No legacy OTA password: on a trusted LAN the API channel is already
+    # encrypted. On ESPHome 2026.9+ encrypted OTA uses the API key; check the
+    # OTA docs for your exact version before adding a password.
+
+safe_mode:
+
+wifi:
+  ssid: ${wifi_ssid}
+  password: ${wifi_pass}
+  # Optional static IP. A DHCP reservation on the router is usually simpler.
+  # manual_ip:
+  #   static_ip: 192.168.100.50
+  #   gateway: 192.168.100.1
+  #   subnet: 255.255.255.0
+  ap:
+    ssid: ${devicefriendlyname}
+    password: ${web_server_pass}
+  on_connect:
+    then:
+      - script.execute: beep
+      - repeat:
+          count: 4
+          then:
+            - script.execute: blink_led
+            - delay: 300ms
+
+captive_portal:
+
+web_server:
+  port: 80
+  local: true
+  version: 2
+  log: false
+  auth:
+    username: ${web_server_user}
+    password: ${web_server_pass}
+    type: digest
+
+logger:
+  level: WARN
+  baud_rate: 0
+
+one_wire:
+  - platform: gpio
+    id: bus_onewire
+    pin: ${pin_onewire}
+
+sensor:
+  # Calibration is applied to the raw reading: value = raw + "<sensor> calibration".
+  # A changed calibration takes effect from the next measurement (update_interval).
+  - platform: dallas_temp
+    one_wire_id: bus_onewire
+    address: ${addr_outdoor}
+    name: "Outdoor temperature"
+    id: outdoor_temp
+    filters:
+      # Optional smoothing (adds lag; do not enable for alarm-critical values):
+      # - median:
+      #     window_size: 5
+      #     send_every: 5
+      - lambda: |-
+          float c = id(cal_outdoor).state;
+          return std::isnan(c) ? x : x + c;
+    update_interval: ${temp_update_interval}
+    accuracy_decimals: 2
+    icon: "mdi:temperature-celsius"
+
+  - platform: dallas_temp
+    one_wire_id: bus_onewire
+    address: ${addr_supply}
+    name: "Supply temperature"
+    id: supply_temp
+    filters:
+      # Optional smoothing (see the note above).
+      - lambda: |-
+          float c = id(cal_supply).state;
+          return std::isnan(c) ? x : x + c;
+    update_interval: ${temp_update_interval}
+    accuracy_decimals: 2
+    icon: "mdi:temperature-celsius"
+
+  - platform: dallas_temp
+    one_wire_id: bus_onewire
+    address: ${addr_return}
+    name: "Return temperature"
+    id: return_temp
+    filters:
+      # Optional smoothing (see the note above).
+      - lambda: |-
+          float c = id(cal_return).state;
+          return std::isnan(c) ? x : x + c;
+    update_interval: ${temp_update_interval}
+    accuracy_decimals: 2
+    icon: "mdi:temperature-celsius"
+
+  - platform: dallas_temp
+    one_wire_id: bus_onewire
+    address: ${addr_auger}
+    name: "Auger temperature"
+    id: auger_temp
+    filters:
+      # Optional smoothing (see the note above).
+      - lambda: |-
+          float c = id(cal_auger).state;
+          return std::isnan(c) ? x : x + c;
+    update_interval: ${temp_update_interval}
+    accuracy_decimals: 2
+    icon: "mdi:temperature-celsius"
+
+  - platform: dallas_temp
+    one_wire_id: bus_onewire
+    address: ${addr_hopper}
+    name: "Hopper air temperature"
+    id: hopper_temp
+    filters:
+      # Optional smoothing (see the note above).
+      - lambda: |-
+          float c = id(cal_hopper).state;
+          return std::isnan(c) ? x : x + c;
+    update_interval: ${temp_update_interval}
+    accuracy_decimals: 2
+    icon: "mdi:temperature-celsius"
+
+  # dBm, signal_strength, measurement and diagnostic are the platform defaults.
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    device_class: signal_strength
+    update_interval: 60s
+    accuracy_decimals: 0
+
+  - platform: uptime
+    name: "Uptime"
+    id: uptime_sensor
+    internal: false
+    update_interval: 300s
+    icon: "mdi:timer"
+
+  # Difference between supply and return; useful for boiler diagnostics.
+  - platform: template
+    name: "Delta temperature"
+    id: delta_temp
+    unit_of_measurement: "°C"
+    device_class: temperature_delta
+    state_class: measurement
+    accuracy_decimals: 2
+    update_interval: 30s
+    icon: "mdi:thermometer-chevron-up"
+    lambda: |-
+      if (std::isnan(id(supply_temp).state) || std::isnan(id(return_temp).state)) {
+        return NAN;
+      }
+      return id(supply_temp).state - id(return_temp).state;
+
+# ------------------------------------------------------------------------------
+# 3-digit 7-segment display (TM1637). No buttons: the carousel is automatic and
+# configured with "Display mode", "Display page time" and "Display brightness".
+# ------------------------------------------------------------------------------
+display:
+  - platform: tm1637
+    id: tm_display
+    clk_pin: ${pin_tm_clk}
+    dio_pin: ${pin_tm_dio}
+    length: 3
+    inverted: ${display_inverted}
+    intensity: 5
+    # 250 ms is the blink resolution for values that are in alarm.
+    update_interval: 250ms
+    lambda: |-
+      // Lamp test right after power-up (all segments lit).
+      if (millis() < 1500) {
+        it.print(0, "888");
+        return;
+      }
+
+      // Brightness 1..8 (number entity) -> TM1637 intensity 0..7.
+      float br = id(display_brightness).state;
+      int level = std::isnan(br) ? 5 : (int) br - 1;
+      if (level < 0) level = 0;
+      if (level > 7) level = 7;
+      it.set_intensity((uint8_t) level);
+
+      static const char *const labels[5] = {
+        "${label_outdoor}", "${label_supply}", "${label_return}",
+        "${label_auger}", "${label_hopper}"};
+      const float temp[5] = {
+        id(outdoor_temp).state, id(supply_temp).state, id(return_temp).state,
+        id(auger_temp).state, id(hopper_temp).state};
+      const bool alarm[5] = {
+        id(alarm_outdoor).state, id(alarm_supply).state, id(alarm_return).state,
+        id(alarm_auger).state, id(alarm_hopper).state};
+
+      // Pages of the carousel: sensors in alarm have priority over any mode.
+      int list[5];
+      int n = 0;
+      for (int i = 0; i < 5; i++) {
+        if (alarm[i]) list[n++] = i;
+      }
+      if (n == 0) {
+        auto idx = id(display_mode).active_index();
+        int mode = idx.has_value() ? (int) idx.value() : 0;
+        if (mode >= 1 && mode <= 5) {
+          list[n++] = mode - 1;            // fixed sensor
+        } else {
+          for (int i = 0; i < 5; i++) list[n++] = i;   // Auto: all sensors
+        }
+      }
+
+      // Page = label phase, then value phase.
+      const uint32_t label_ms = ${display_label_ms};
+      float pt = id(display_page_time).state;
+      uint32_t value_ms = (uint32_t) ((std::isnan(pt) ? 3.0f : pt) * 1000.0f);
+      uint32_t period = label_ms + value_ms;
+      uint32_t pos = millis() % (period * (uint32_t) n);
+      int s = list[pos / period];
+      uint32_t phase = pos % period;
+
+      if (phase < label_ms) {
+        it.print(0, labels[s]);
+        return;
+      }
+
+      float t = temp[s];
+      if (std::isnan(t)) {
+        it.print(0, millis() < 20000 ? "---" : "Err");
+        return;
+      }
+      // Blink the value while this sensor is in alarm.
+      if (alarm[s] && ((millis() / 250) % 2 == 1)) {
+        return;
+      }
+      float r = roundf(t * 10.0f) / 10.0f;
+      if (r == 0.0f) r = 0.0f;             // avoid "-0.0"
+      if (r > -10.0f && r < 100.0f) {
+        it.printf(0, "%4.1f", r);          // "23.5", " 5.2", "-9.9" (3 digits)
+      } else {
+        it.printf(0, "%3.0f", r);          // "100", "-12"
+      }
+
+binary_sensor:
+  # Per-sensor alarms: the calibrated value is outside the sensor's own
+  # [low, high] range. A missing sensor (NaN) never triggers an alarm; it is
+  # reported by "Temperature sensor fault" below instead.
+  - platform: template
+    name: "Outdoor alarm"
+    id: alarm_outdoor
+    device_class: problem
+    icon: "mdi:thermometer-alert"
+    filters:
+      - delayed_on: 5s
+      - delayed_off: 30s
+    lambda: |-
+      float t = id(outdoor_temp).state;
+      return !std::isnan(t) &&
+             (t < id(alarm_outdoor_low).state || t > id(alarm_outdoor_high).state);
+
+  - platform: template
+    name: "Supply alarm"
+    id: alarm_supply
+    device_class: problem
+    icon: "mdi:thermometer-alert"
+    filters:
+      - delayed_on: 5s
+      - delayed_off: 30s
+    lambda: |-
+      float t = id(supply_temp).state;
+      return !std::isnan(t) &&
+             (t < id(alarm_supply_low).state || t > id(alarm_supply_high).state);
+
+  - platform: template
+    name: "Return alarm"
+    id: alarm_return
+    device_class: problem
+    icon: "mdi:thermometer-alert"
+    filters:
+      - delayed_on: 5s
+      - delayed_off: 30s
+    lambda: |-
+      float t = id(return_temp).state;
+      return !std::isnan(t) &&
+             (t < id(alarm_return_low).state || t > id(alarm_return_high).state);
+
+  - platform: template
+    name: "Auger alarm"
+    id: alarm_auger
+    device_class: problem
+    icon: "mdi:thermometer-alert"
+    filters:
+      - delayed_on: 5s
+      - delayed_off: 30s
+    lambda: |-
+      float t = id(auger_temp).state;
+      return !std::isnan(t) &&
+             (t < id(alarm_auger_low).state || t > id(alarm_auger_high).state);
+
+  - platform: template
+    name: "Hopper alarm"
+    id: alarm_hopper
+    device_class: problem
+    icon: "mdi:thermometer-alert"
+    filters:
+      - delayed_on: 5s
+      - delayed_off: 30s
+    lambda: |-
+      float t = id(hopper_temp).state;
+      return !std::isnan(t) &&
+             (t < id(alarm_hopper_low).state || t > id(alarm_hopper_high).state);
+
+  # Summary alarm: any of the five sensors is out of its limits. Starts and
+  # stops the local signal (alarm_loop).
+  - platform: template
+    name: "Temperature alarm"
+    id: temp_alarm
+    device_class: problem
+    icon: "mdi:thermometer-alert"
+    # Fire on the first valid state too, otherwise a reboot while already in
+    # alarm would not start alarm_loop.
+    trigger_on_initial_state: true
+    lambda: |-
+      return id(alarm_outdoor).state || id(alarm_supply).state ||
+             id(alarm_return).state || id(alarm_auger).state ||
+             id(alarm_hopper).state;
+    on_press:
+      then:
+        - script.execute: alarm_loop
+    on_release:
+      then:
+        - script.execute: stop_alarm
+
+  # dallas_temp publishes NAN when a probe cannot be read. This entity makes
+  # that condition visible in Home Assistant and available for notifications.
+  - platform: template
+    name: "Temperature sensor fault"
+    id: sensor_fault
+    device_class: problem
+    icon: "mdi:thermometer-off"
+    lambda: |-
+      return std::isnan(id(outdoor_temp).state) ||
+             std::isnan(id(supply_temp).state) ||
+             std::isnan(id(return_temp).state) ||
+             std::isnan(id(auger_temp).state) ||
+             std::isnan(id(hopper_temp).state);
+    filters:
+      # Ignore the first 90 s after boot while the probes are still starting.
+      - delayed_on: 90s
+      - delayed_off: 30s
+
+  - platform: status
+    name: "Status"
+    entity_category: diagnostic
+
+select:
+  # Display mode replaces the missing hardware buttons.
+  - platform: template
+    name: "Display mode"
+    id: display_mode
+    options:
+      - "Auto"
+      - "Outdoor"
+      - "Supply"
+      - "Return"
+      - "Auger"
+      - "Hopper"
+    initial_option: "Auto"
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    icon: "mdi:monitor-dashboard"
+
+number:
+  # --- manual calibration (offset added to the sensor reading) ---
+  - platform: template
+    name: "Outdoor calibration"
+    id: cal_outdoor
+    min_value: -10
+    max_value: 10
+    step: 0.1
+    unit_of_measurement: "°C"
+    mode: box
+    initial_value: ${cal_outdoor_default}
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    icon: "mdi:thermometer-plus"
+
+  - platform: template
+    name: "Supply calibration"
+    id: cal_supply
+    min_value: -10
+    max_value: 10
+    step: 0.1
+    unit_of_measurement: "°C"
+    mode: box
+    initial_value: ${cal_supply_default}
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    icon: "mdi:thermometer-plus"
+
+  - platform: template
+    name: "Return calibration"
+    id: cal_return
+    min_value: -10
+    max_value: 10
+    step: 0.1
+    unit_of_measurement: "°C"
+    mode: box
+    initial_value: ${cal_return_default}
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    icon: "mdi:thermometer-plus"
+
+  - platform: template
+    name: "Auger calibration"
+    id: cal_auger
+    min_value: -10
+    max_value: 10
+    step: 0.1
+    unit_of_measurement: "°C"
+    mode: box
+    initial_value: ${cal_auger_default}
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    icon: "mdi:thermometer-plus"
+
+  - platform: template
+    name: "Hopper calibration"
+    id: cal_hopper
+    min_value: -10
+    max_value: 10
+    step: 0.1
+    unit_of_measurement: "°C"
+    mode: box
+    initial_value: ${cal_hopper_default}
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    icon: "mdi:thermometer-plus"
+
+  # --- temperature alarm, separate thresholds per sensor ---
+  - platform: template
+    name: "Outdoor alarm low"
+    id: alarm_outdoor_low
+    min_value: -55
+    max_value: 125
+    step: 0.1
+    unit_of_measurement: "°C"
+    device_class: temperature
+    mode: box
+    initial_value: ${alarm_outdoor_low_default}
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    icon: "mdi:thermometer-low"
+
+  - platform: template
+    name: "Outdoor alarm high"
+    id: alarm_outdoor_high
+    min_value: -55
+    max_value: 125
+    step: 0.1
+    unit_of_measurement: "°C"
+    device_class: temperature
+    mode: box
+    initial_value: ${alarm_outdoor_high_default}
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    icon: "mdi:thermometer-high"
+
+  - platform: template
+    name: "Supply alarm low"
+    id: alarm_supply_low
+    min_value: -55
+    max_value: 125
+    step: 0.1
+    unit_of_measurement: "°C"
+    device_class: temperature
+    mode: box
+    initial_value: ${alarm_supply_low_default}
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    icon: "mdi:thermometer-low"
+
+  - platform: template
+    name: "Supply alarm high"
+    id: alarm_supply_high
+    min_value: -55
+    max_value: 125
+    step: 0.1
+    unit_of_measurement: "°C"
+    device_class: temperature
+    mode: box
+    initial_value: ${alarm_supply_high_default}
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    icon: "mdi:thermometer-high"
+
+  - platform: template
+    name: "Return alarm low"
+    id: alarm_return_low
+    min_value: -55
+    max_value: 125
+    step: 0.1
+    unit_of_measurement: "°C"
+    device_class: temperature
+    mode: box
+    initial_value: ${alarm_return_low_default}
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    icon: "mdi:thermometer-low"
+
+  - platform: template
+    name: "Return alarm high"
+    id: alarm_return_high
+    min_value: -55
+    max_value: 125
+    step: 0.1
+    unit_of_measurement: "°C"
+    device_class: temperature
+    mode: box
+    initial_value: ${alarm_return_high_default}
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    icon: "mdi:thermometer-high"
+
+  - platform: template
+    name: "Auger alarm low"
+    id: alarm_auger_low
+    min_value: -55
+    max_value: 125
+    step: 0.1
+    unit_of_measurement: "°C"
+    device_class: temperature
+    mode: box
+    initial_value: ${alarm_auger_low_default}
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    icon: "mdi:thermometer-low"
+
+  - platform: template
+    name: "Auger alarm high"
+    id: alarm_auger_high
+    min_value: -55
+    max_value: 125
+    step: 0.1
+    unit_of_measurement: "°C"
+    device_class: temperature
+    mode: box
+    initial_value: ${alarm_auger_high_default}
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    icon: "mdi:thermometer-high"
+
+  - platform: template
+    name: "Hopper alarm low"
+    id: alarm_hopper_low
+    min_value: -55
+    max_value: 125
+    step: 0.1
+    unit_of_measurement: "°C"
+    device_class: temperature
+    mode: box
+    initial_value: ${alarm_hopper_low_default}
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    icon: "mdi:thermometer-low"
+
+  - platform: template
+    name: "Hopper alarm high"
+    id: alarm_hopper_high
+    min_value: -55
+    max_value: 125
+    step: 0.1
+    unit_of_measurement: "°C"
+    device_class: temperature
+    mode: box
+    initial_value: ${alarm_hopper_high_default}
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    icon: "mdi:thermometer-high"
+
+  - platform: template
+    name: "Alarm repeat interval"
+    id: alarm_interval
+    min_value: 1
+    max_value: 86400
+    step: 1
+    unit_of_measurement: "s"
+    device_class: duration
+    mode: box
+    initial_value: ${alarm_interval_default}
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    icon: "mdi:timer-sand"
+
+  # --- display ---
+  - platform: template
+    name: "Display page time"
+    id: display_page_time
+    min_value: 1
+    max_value: 30
+    step: 1
+    unit_of_measurement: "s"
+    device_class: duration
+    mode: box
+    initial_value: ${display_page_time_default}
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    icon: "mdi:timer-outline"
+
+  - platform: template
+    name: "Display brightness"
+    id: display_brightness
+    min_value: 1
+    max_value: 8
+    step: 1
+    mode: slider
+    initial_value: ${display_brightness_default}
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    icon: "mdi:brightness-6"
+
+  # --- buzzer ---
+  # Volume is the amplitude of the signal: 100 % = 50 % PWM duty (maximum for a
+  # square wave), lower values narrow the pulses.
+  - platform: template
+    name: "Sound volume"
+    id: sound_volume
+    min_value: 0
+    max_value: 100
+    step: 1
+    unit_of_measurement: "%"
+    mode: slider
+    initial_value: ${sound_volume_default}
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    icon: "mdi:volume-medium"
+
+  # A piezo buzzer is loudest near its resonance frequency (usually 2-4 kHz):
+  # press "Beep test" and change this value to find the loudest point.
+  - platform: template
+    name: "Sound frequency"
+    id: sound_frequency
+    min_value: 500
+    max_value: 5000
+    step: 50
+    unit_of_measurement: "Hz"
+    device_class: frequency
+    mode: box
+    initial_value: ${sound_frequency_default}
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    icon: "mdi:sine-wave"
+
+  - platform: template
+    name: "Sound duration"
+    id: sound_duration
+    min_value: 20
+    max_value: 2000
+    step: 10
+    unit_of_measurement: "ms"
+    device_class: duration
+    mode: box
+    initial_value: ${sound_duration_default}
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    icon: "mdi:timer-outline"
+
+output:
+  - platform: gpio
+    pin: ${pin_led}
+    inverted: true
+    id: led_gpio
+
+  # Passive buzzer (software PWM; frequency and duty are set by script buzzer_tone)
+  - platform: esp8266_pwm
+    pin: ${pin_buzzer}
+    id: buzzer_out
+
+switch:
+  - platform: output
+    output: led_gpio
+    name: "LED"
+    id: led_switch
+    entity_category: config
+    icon: "mdi:lightbulb"
+
+  # Master mute for boot/connect/alarm beeps
+  - platform: template
+    name: "Sound"
+    id: sound_enabled
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    entity_category: config
+    icon: "mdi:volume-high"
+    on_turn_off:
+      then:
+        # Stop a tone that is already playing; otherwise it would finish even
+        # though the user just muted the device.
+        - script.stop: buzzer_tone
+        - output.set_level:
+            id: buzzer_out
+            level: 0%
+
+button:
+  # Test beep ignores the "Sound" mute switch
+  - platform: template
+    name: "Beep test"
+    id: beep_test
+    icon: "mdi:bell-ring"
+    entity_category: diagnostic
+    on_press:
+      then:
+        - script.execute: buzzer_tone
+
+  # Silences the local alarm until the temperature returns to normal.
+  # The "Temperature alarm" entity in Home Assistant stays on and the display
+  # keeps blinking the sensors that are in alarm.
+  - platform: template
+    name: "Acknowledge alarm"
+    id: ack_alarm
+    icon: "mdi:bell-off"
+    entity_category: diagnostic
+    on_press:
+      then:
+        - if:
+            condition:
+              binary_sensor.is_on: temp_alarm
+            then:
+              - script.execute: stop_alarm
+
+  - platform: restart
+    name: "Restart"
+    entity_category: diagnostic
+
+  - platform: safe_mode
+    name: "Safe mode"
+    entity_category: diagnostic
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+      entity_category: diagnostic
+    ssid:
+      name: "SSID"
+      entity_category: diagnostic
+    bssid:
+      name: "BSSID"
+      entity_category: diagnostic
+
+  - platform: version
+    name: "ESPHome Version"
+    entity_category: diagnostic
+    disabled_by_default: true
+
+script:
+  - id: blink_led
+    mode: single
+    then:
+      - switch.turn_on: led_switch
+      - delay: 200ms
+      - switch.turn_off: led_switch
+
+  # Plays one tone with the current volume / frequency / duration settings
+  - id: buzzer_tone
+    mode: single
+    then:
+      - output.esp8266_pwm.set_frequency:
+          id: buzzer_out
+          frequency: !lambda |-
+            float f = id(sound_frequency).state;
+            return std::isnan(f) ? 3000.0f : f;
+      - output.set_level:
+          id: buzzer_out
+          level: !lambda |-
+            float v = id(sound_volume).state;
+            if (std::isnan(v)) v = 100.0f;
+            // amplitude of a square wave ~ sin(pi * duty): volume 100 % -> duty 50 %
+            return std::asin(v / 100.0f) / 3.14159265f;
+      - delay: !lambda |-
+          float d = id(sound_duration).state;
+          return (uint32_t) (std::isnan(d) ? 100.0f : d);
+      - output.set_level:
+          id: buzzer_out
+          level: 0%
+
+  # One short beep (respects the "Sound" switch)
+  - id: beep
+    mode: single
+    then:
+      - if:
+          condition:
+            switch.is_on: sound_enabled
+          then:
+            - script.execute: buzzer_tone
+
+  # While the alarm is active: blink + beep, repeat every "Alarm repeat interval"
+  - id: alarm_loop
+    mode: single
+    then:
+      - while:
+          condition:
+            binary_sensor.is_on: temp_alarm
+          then:
+            - script.execute: blink_led
+            - script.execute: beep
+            - delay: !lambda 'return (uint32_t) (id(alarm_interval).state * 1000);'
+
+  # Safe stop used by "Acknowledge alarm" and on_release.
+  # Stopping scripts alone could leave the PWM output at a non-zero duty, so
+  # explicitly set it to 0 % afterwards.
+  - id: stop_alarm
+    mode: restart
+    then:
+      - script.stop: alarm_loop
+      - script.stop: beep
+      - script.stop: buzzer_tone
+      - output.set_level:
+          id: buzzer_out
+          level: 0%
+      - switch.turn_off: led_switch

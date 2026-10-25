@@ -6,3 +6,6 @@ thermobot_hass/esphome/.esphome/
 __pycache__/
 venv/
 .venv/
+
+# Local assets (kept out of the repository)
+/assets/

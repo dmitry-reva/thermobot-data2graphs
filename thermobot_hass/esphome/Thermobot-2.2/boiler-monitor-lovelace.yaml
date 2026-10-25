@@ -1,0 +1,148 @@
+# Boiler Monitor: карточка для панели Home Assistant (встроенные карточки, HACS не нужен).
+# Добавление: панель -> Изменить -> + Добавить карточку -> Вручную -> вставить весь текст.
+# Идентификаторы сущностей построены из имени устройства "Boiler Monitor";
+# если вы переименовали устройство или сущности, поправьте их (Настройки -> Устройства).
+type: vertical-stack
+cards:
+  # Баннер: виден только при тревоге, перечисляет датчики и их значения.
+  - type: conditional
+    conditions:
+      - condition: state
+        entity: binary_sensor.boiler_monitor_temperature_alarm
+        state: "on"
+    card:
+      type: markdown
+      content: |-
+        ## ⚠️ Температурная тревога
+        {% set items = [
+          ('Улица', 'binary_sensor.boiler_monitor_outdoor_alarm', 'sensor.boiler_monitor_outdoor_temperature'),
+          ('Подача', 'binary_sensor.boiler_monitor_supply_alarm', 'sensor.boiler_monitor_supply_temperature'),
+          ('Возврат', 'binary_sensor.boiler_monitor_return_alarm', 'sensor.boiler_monitor_return_temperature'),
+          ('Шнек', 'binary_sensor.boiler_monitor_auger_alarm', 'sensor.boiler_monitor_auger_temperature'),
+          ('Бункер', 'binary_sensor.boiler_monitor_hopper_alarm', 'sensor.boiler_monitor_hopper_air_temperature')] %}
+        {% for name, alarm, temp in items if is_state(alarm, 'on') -%}
+        - **{{ name }}**: {{ states(temp) }} °C
+        {% endfor %}
+
+  # Баннер: виден при отказе датчика.
+  - type: conditional
+    conditions:
+      - condition: state
+        entity: binary_sensor.boiler_monitor_temperature_sensor_fault
+        state: "on"
+    card:
+      type: markdown
+      content: "### 🔌 Отказ датчика температуры\nПроверьте подключение датчиков DS18B20."
+
+  # Температуры.
+  - type: grid
+    columns: 3
+    square: false
+    cards:
+      - type: tile
+        entity: sensor.boiler_monitor_outdoor_temperature
+        name: Улица
+        icon: mdi:weather-partly-cloudy
+        vertical: true
+      - type: tile
+        entity: sensor.boiler_monitor_supply_temperature
+        name: Подача
+        icon: mdi:thermometer-chevron-up
+        vertical: true
+      - type: tile
+        entity: sensor.boiler_monitor_return_temperature
+        name: Возврат
+        icon: mdi:thermometer-chevron-down
+        vertical: true
+      - type: tile
+        entity: sensor.boiler_monitor_auger_temperature
+        name: Шнек
+        icon: mdi:cog
+        vertical: true
+      - type: tile
+        entity: sensor.boiler_monitor_hopper_air_temperature
+        name: Бункер
+        icon: mdi:silo
+        vertical: true
+      - type: tile
+        entity: sensor.boiler_monitor_delta_temperature
+        name: Δ подача-возврат
+        icon: mdi:thermometer-lines
+        vertical: true
+
+  # Тревоги и управление сигналом и дисплеем.
+  - type: entities
+    title: Тревоги
+    show_header_toggle: false
+    entities:
+      - entity: binary_sensor.boiler_monitor_temperature_alarm
+        name: Общая тревога
+      - entity: binary_sensor.boiler_monitor_outdoor_alarm
+        name: Улица
+      - entity: binary_sensor.boiler_monitor_supply_alarm
+        name: Подача
+      - entity: binary_sensor.boiler_monitor_return_alarm
+        name: Возврат
+      - entity: binary_sensor.boiler_monitor_auger_alarm
+        name: Шнек
+      - entity: binary_sensor.boiler_monitor_hopper_alarm
+        name: Бункер
+      - entity: binary_sensor.boiler_monitor_temperature_sensor_fault
+        name: Отказ датчика
+      - type: divider
+      - entity: button.boiler_monitor_acknowledge_alarm
+        name: Подтвердить (выключить звук)
+      - entity: switch.boiler_monitor_sound
+        name: Звук
+      - entity: select.boiler_monitor_display_mode
+        name: Режим дисплея
+
+  # График за сутки.
+  - type: history-graph
+    title: Температуры за 24 часа
+    hours_to_show: 24
+    entities:
+      - entity: sensor.boiler_monitor_supply_temperature
+        name: Подача
+      - entity: sensor.boiler_monitor_return_temperature
+        name: Возврат
+      - entity: sensor.boiler_monitor_auger_temperature
+        name: Шнек
+      - entity: sensor.boiler_monitor_hopper_air_temperature
+        name: Бункер
+      - entity: sensor.boiler_monitor_outdoor_temperature
+        name: Улица
+
+  # Калибровка и границы тревоги (на панели по умолчанию эти сущности скрыты в "Конфигурации").
+  - type: entities
+    title: Калибровка и границы
+    show_header_toggle: false
+    entities:
+      - type: section
+        label: Калибровка, °C
+      - number.boiler_monitor_outdoor_calibration
+      - number.boiler_monitor_supply_calibration
+      - number.boiler_monitor_return_calibration
+      - number.boiler_monitor_auger_calibration
+      - number.boiler_monitor_hopper_calibration
+      - type: section
+        label: Границы тревоги, °C
+      - number.boiler_monitor_outdoor_alarm_low
+      - number.boiler_monitor_outdoor_alarm_high
+      - number.boiler_monitor_supply_alarm_low
+      - number.boiler_monitor_supply_alarm_high
+      - number.boiler_monitor_return_alarm_low
+      - number.boiler_monitor_return_alarm_high
+      - number.boiler_monitor_auger_alarm_low
+      - number.boiler_monitor_auger_alarm_high
+      - number.boiler_monitor_hopper_alarm_low
+      - number.boiler_monitor_hopper_alarm_high
+      - number.boiler_monitor_alarm_repeat_interval
+      - type: section
+        label: Дисплей и звук
+      - number.boiler_monitor_display_page_time
+      - number.boiler_monitor_display_brightness
+      - number.boiler_monitor_sound_volume
+      - number.boiler_monitor_sound_frequency
+      - number.boiler_monitor_sound_duration
+      - button.boiler_monitor_beep_test

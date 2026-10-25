@@ -1,0 +1,674 @@
+# ==============================================================================
+# thermobot-ds.yaml
+# ESPHome-реконструкция заводской прошивки Thermobot (Thermobot-2 Mini)
+#
+# Файл составлен по результатам статического анализа дампа флеш-памяти
+# (assets/thermobot-mini/dump13.bin и дизассемблер irom/iram), а не копированием
+# готовых конфигураций автора. Ниже перечислено, что именно найдено в дампе.
+#
+# Что есть в заводской прошивке (подтверждено строками и кодом дампа):
+#   * Arduino-скетч для ESP8266, SDK core 2.2.2-dev(38a443e);
+#   * DS18B20 (1-Wire) — один штатный датчик;
+#   * TM1637, 4-разрядный индикатор: в дампе лежит таблица шрифта 7-сегментника,
+#     пины CLK/DIO = GPIO4/GPIO5 (подтверждены автором на плате);
+#   * светодиод GPIO2 (инверсная логика), зуммер GPIO12 (tone(12, 3000, 100)),
+#     кнопка GPIO14 (INPUT_PULLUP, активный низкий уровень);
+#   * HTTP-сервер на порту 80: страницы /wifi, /telega, /termo, служебные
+#     /read (температура), /pead, /led_set?state=, /but_st, /generate_204;
+#   * точка доступа THERMOBOT / 88888888, канал AP 1..13;
+#   * настройки: нижняя и верхняя границы -55…125 °C, интервал оповещения
+#     1…86400 с, калибровка -5…+5 °C, звук вкл/выкл, интервал перезагрузки
+#     Wi-Fi 0…1440 мин (0 = выкл), SSID/пароль AP, канал AP, токен и chat_id
+#     Telegram, произвольный текст сообщения;
+#   * Telegram-бот с командами Т, Н:, В:, И:, К:, И, ID, Вкл, Откл, П: и
+#     приветствием «Привет :)»;
+#   * повторные сообщения при выходе температуры за границы с заданным
+#     интервалом, отдельное сообщение «нет датчика».
+#
+# Что воспроизведено здесь:
+#   * все заводские настройки — сущностями Home Assistant (number/switch/text),
+#     сохраняются во flash и переживают потерю питания;
+#   * оповещение в Telegram (http_request) с повтором через заданный интервал
+#     и отдельным сообщением при отказе датчика;
+#   * локальная сигнализация: зуммер 3000 Гц / 100 мс и мигание светодиодом;
+#   * клиент Wi-Fi + аварийная точка доступа THERMOBOT;
+#   * перезагрузка Wi-Fi модуля по таймеру (0…1440 мин);
+#   * TM1637, физическая кнопка (сброс сигнала), LED, зуммер.
+#
+# Осознанные отличия от оригинала:
+#   * приём команд Telegram-бота не реализован. ESPHome не умеет надёжно
+#     делать long-polling getUpdates, а установка «моста» из HA дублирует
+#     интеграцию Telegram. Команды заменены сущностями HA (см. таблицу ниже);
+#     при необходимости автоматизацию-обёртку можно собрать в Home Assistant.
+#   * вместо самописного web-интерфейса — штатный web_server ESPHome (порт 80).
+#   * добавлены API, OTA, safe_mode и служебные сущности ESPHome.
+#   * значения границ по умолчанию — весь допустимый диапазон (-55…125 °C):
+#     в дампе для незаданных границ есть строка «не введен», то есть заводская
+#     прошивка не включает оповещения, пока пользователь не задал пороги.
+#     Если нужен вариант «5/30 °C» — поменяйте substitutions ниже.
+#
+# Требуемые секреты (secrets.yaml):
+#   wifi_0f, wifi_password, web_server_pass, api_key, tg_token, tg_chat
+#
+# Таблица соответствия заводским настройкам:
+#   «Нижняя граница»              -> number "Alarm low"
+#   «Верхняя граница»             -> number "Alarm high"
+#   «Интервал оповещения»         -> number "Alarm repeat interval"
+#   «Калибровка датчика»          -> number "Calibration"
+#   «Звуковой сигнал» вкл/выкл    -> switch "Sound"
+#   «Интервал перезагрузки Wi-Fi» -> number "Wi-Fi restart interval"
+#   «Текст сообщения»             -> text "Telegram message"
+#   «API token / ID чата»         -> secrets tg_token / tg_chat
+#   «SSID/пароль AP, канал»       -> substitutions ap_ssid / ap_password / ap_channel
+#   Ручное управление LED         -> switch "LED"
+#   Команда бота Т                -> sensor "Temperature"
+#   Команда бота Н:/В:/К:/И:/П:   -> соответствующие number
+#   Команда бота Вкл/Откл         -> switch "Sound"
+# ==============================================================================
+
+substitutions:
+  devicename: thermobot
+  friendly_name: Thermobot
+
+  # --- Пины платы Thermobot-2 Mini ---
+  # GPIO0 (strapping): линия 1-Wire, обязательна подтяжка 4,7 кОм к 3,3 В.
+  pin_onewire: GPIO0
+  # GPIO2 (strapping): светодиод с инверсной логикой, при старте должен быть HIGH.
+  pin_led: GPIO2
+  # GPIO12: пассивный зуммер.
+  pin_buzzer: GPIO12
+  # GPIO14: кнопка, INPUT_PULLUP, активный низкий уровень.
+  pin_button: GPIO14
+  # TM1637: в заводской прошивке индикатор есть, на плате Mini он может быть
+  # не распаян. Если индикатора нет — удалите блок display ниже.
+  pin_tm_clk: GPIO4
+  pin_tm_dio: GPIO5
+
+  # --- Периоды ---
+  temp_update_interval: 10s
+
+  # --- Заводские значения по умолчанию ---
+  # Диапазон, который прошивка принимает для границ: -55…125 °C.
+  # По умолчанию взят весь диапазон (оповещения выключены до настройки).
+  # Заводской вариант «5/30 °C»: alarm_low_default: "5", alarm_high_default: "30".
+  alarm_low_default: "-55"
+  alarm_high_default: "125"
+  # 1…86400 с; заводское значение в дампе не сохранилось, взято 600 с.
+  alarm_interval_default: "600"
+  # -5…+5 °C.
+  calibration_default: "0"
+  # 0…1440 мин, 0 = не перезагружать.
+  wifi_restart_default: "0"
+
+  # --- Точка доступа (как в заводской прошивке) ---
+  ap_ssid: "THERMOBOT"
+  ap_password: "88888888"
+  ap_channel: "1"
+
+  # --- Звук: tone(12, 3000, 100) из заводской прошивки ---
+  buzzer_frequency: "3000"
+  buzzer_duration: "100ms"
+
+  # --- Секреты ---
+  wifi_ssid: !secret wifi_0f
+  wifi_password: !secret wifi_password
+  web_server_user: ${devicename}
+  web_server_pass: !secret web_server_pass
+  api_key: !secret api_key
+  tg_token: !secret tg_token
+  tg_chat: !secret tg_chat
+
+esphome:
+  name: ${devicename}
+  friendly_name: ${friendly_name}
+  comment: "Thermobot-2 Mini: DS18B20, alarm, buzzer, LED, Telegram"
+  name_add_mac_suffix: false
+  project:
+    name: "deepseek.thermobot_factory_clone"
+    version: "1.0.0"
+  # В 2026.10 опция http_request verify_ssl перенесена на верхний уровень;
+  # конфигурация проверялась на ESPHome 2026.10.0.
+  min_version: "2026.10.0"
+  on_boot:
+    - priority: -100
+      then:
+        # Заводская прошивка пищит и мигает при старте.
+        - script.execute: beep
+        - script.execute: blink_led
+
+esp8266:
+  # Thermobot-2 Mini: ESP8266MOD, 4 МБ flash (проверено автором при прошивке).
+  board: nodemcuv2
+  # Нужно для restore_value у настроек: они переживут потерю питания.
+  restore_from_flash: true
+
+api:
+  encryption:
+    key: ${api_key}
+  # Не перезагружаться, если Home Assistant временно недоступен.
+  reboot_timeout: 0s
+
+ota:
+  - platform: esphome
+
+safe_mode:
+
+wifi:
+  ssid: ${wifi_ssid}
+  password: ${wifi_password}
+  # Заводская аварийная точка доступа: THERMOBOT / 88888888.
+  ap:
+    ssid: ${ap_ssid}
+    password: ${ap_password}
+    channel: ${ap_channel}
+  on_connect:
+    then:
+      # Заводская прошивка сообщает о подключении звуком и миганием.
+      - script.execute: beep
+      - repeat:
+          count: 4
+          then:
+            - script.execute: blink_led
+            - delay: 250ms
+
+captive_portal:
+
+web_server:
+  port: 80
+  local: true
+  version: 2
+  log: false
+  auth:
+    username: ${web_server_user}
+    password: ${web_server_pass}
+    type: digest
+
+logger:
+  # Как в рабочей прошивке: тихий лог, serial-вывод выключен.
+  level: WARN
+  baud_rate: 0
+
+# ------------------------------------------------------------------------------
+# 1-Wire / DS18B20
+# ------------------------------------------------------------------------------
+one_wire:
+  - platform: gpio
+    id: bus_1wire
+    pin: ${pin_onewire}
+
+sensor:
+  # Единственный штатный датчик. Если датчиков несколько, добавьте address:
+  # (адрес можно подсмотреть в логе при level: DEBUG).
+  - platform: dallas_temp
+    one_wire_id: bus_1wire
+    name: "Temperature"
+    id: temp
+    update_interval: ${temp_update_interval}
+    accuracy_decimals: 2
+    unit_of_measurement: "°C"
+    icon: "mdi:thermometer"
+    filters:
+      # Калибровка — смещение: value = raw + calibration (как в оригинале,
+      # диапазон -5…+5 °C). Новое значение применяется со следующего измерения.
+      - lambda: |-
+          float c = id(calibration).state;
+          return std::isnan(c) ? x : x + c;
+
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    update_interval: 60s
+    accuracy_decimals: 0
+
+  - platform: uptime
+    name: "Uptime"
+    update_interval: 300s
+    icon: "mdi:timer"
+
+# ------------------------------------------------------------------------------
+# TM1637: заводской индикатор температуры (4 разряда).
+# Если на вашей плате индикатора нет — закомментируйте/удалите этот блок.
+# ------------------------------------------------------------------------------
+display:
+  - platform: tm1637
+    id: tm_display
+    clk_pin: ${pin_tm_clk}
+    dio_pin: ${pin_tm_dio}
+    intensity: 5
+    update_interval: 1s
+    lambda: |-
+      float t = id(temp).state;
+      if (std::isnan(t)) {
+        it.print("----");
+      } else if (t <= -10.0f || t >= 100.0f) {
+        // четыре разряда: показываем целое число
+        it.printf("%.0f", t);
+      } else {
+        it.printf("%4.1f", t);
+      }
+
+# ------------------------------------------------------------------------------
+# Состояния и авария
+# ------------------------------------------------------------------------------
+binary_sensor:
+  # Авария: температура вышла за границы. Отказ датчика (NaN) сюда не входит —
+  # для него отдельная сущность ниже.
+  - platform: template
+    name: "Temperature alarm"
+    id: temp_alarm
+    device_class: problem
+    icon: "mdi:thermometer-alert"
+    # Сработать и при загрузке, если устройство уже в аварии.
+    trigger_on_initial_state: true
+    filters:
+      - delayed_on: 5s
+      - delayed_off: 30s
+    lambda: |-
+      float t = id(temp).state;
+      float lo = id(alarm_low).state;
+      float hi = id(alarm_high).state;
+      if (std::isnan(t) || std::isnan(lo) || std::isnan(hi)) {
+        return false;
+      }
+      return t < lo || t > hi;
+    on_press:
+      then:
+        - script.execute: alarm_loop
+    on_release:
+      then:
+        - script.execute: stop_alarm
+
+  # Отказ датчика: dallas_temp публикует NaN, если не смог прочитать датчик.
+  - platform: template
+    name: "Temperature sensor fault"
+    id: sensor_fault
+    device_class: problem
+    icon: "mdi:thermometer-off"
+    lambda: |-
+      return std::isnan(id(temp).state);
+    filters:
+      # Не паниковать первые 90 с после старта.
+      - delayed_on: 90s
+      - delayed_off: 30s
+    on_press:
+      then:
+        # Заводское сообщение при отсутствии датчика.
+        - lambda: |-
+            id(send_telegram).execute(std::string("нет датчика"));
+
+  # Физическая кнопка GPIO14 (опционально). Короткое нажатие сбрасывает
+  # локальный сигнал, как кнопка подтверждения в рабочей прошивке автора.
+  - platform: gpio
+    name: "Physical button"
+    id: phys_button
+    pin:
+      number: ${pin_button}
+      mode: INPUT_PULLUP
+      inverted: true
+    filters:
+      - delayed_on_off: 50ms
+    entity_category: diagnostic
+    disabled_by_default: true
+    icon: "mdi:gesture-tap-button"
+    on_click:
+      min_length: 50ms
+      max_length: 1s
+      then:
+        - if:
+            condition:
+              binary_sensor.is_on: temp_alarm
+            then:
+              - script.execute: stop_alarm
+
+  - platform: status
+    name: "Status"
+    entity_category: diagnostic
+
+# ------------------------------------------------------------------------------
+# Настройки (аналоги страниц /termo, /wifi, /telega заводского веб-интерфейса)
+# ------------------------------------------------------------------------------
+number:
+  - platform: template
+    name: "Alarm low"
+    id: alarm_low
+    min_value: -55
+    max_value: 125
+    step: 0.1
+    unit_of_measurement: "°C"
+    device_class: temperature
+    mode: box
+    initial_value: ${alarm_low_default}
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    icon: "mdi:thermometer-low"
+
+  - platform: template
+    name: "Alarm high"
+    id: alarm_high
+    min_value: -55
+    max_value: 125
+    step: 0.1
+    unit_of_measurement: "°C"
+    device_class: temperature
+    mode: box
+    initial_value: ${alarm_high_default}
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    icon: "mdi:thermometer-high"
+
+  # Интервал повторных сообщений, пока температура не вернулась в границы.
+  - platform: template
+    name: "Alarm repeat interval"
+    id: alarm_interval
+    min_value: 1
+    max_value: 86400
+    step: 1
+    unit_of_measurement: "s"
+    device_class: duration
+    mode: box
+    initial_value: ${alarm_interval_default}
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    icon: "mdi:timer-sand"
+
+  # Калибровка датчика: диапазон оригинала -5…+5 °C.
+  - platform: template
+    name: "Calibration"
+    id: calibration
+    min_value: -5
+    max_value: 5
+    step: 0.1
+    unit_of_measurement: "°C"
+    mode: box
+    initial_value: ${calibration_default}
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    icon: "mdi:thermometer-plus"
+
+  # Заводской таймер «перезагрузки Wi-Fi модуля», 0…1440 мин.
+  - platform: template
+    name: "Wi-Fi restart interval"
+    id: wifi_restart
+    min_value: 0
+    max_value: 1440
+    step: 1
+    unit_of_measurement: "min"
+    mode: box
+    initial_value: ${wifi_restart_default}
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    icon: "mdi:restart"
+
+# ------------------------------------------------------------------------------
+# Telegram: произвольный текст сообщения (заводская настройка «Текст сообщения»)
+# ------------------------------------------------------------------------------
+text:
+  - platform: template
+    name: "Telegram message"
+    id: telegram_message
+    optimistic: true
+    mode: text
+    min_length: 0
+    max_length: 200
+    initial_value: "Термометр: температура {t} °C вне границ {lo}…{hi} °C"
+    restore_value: true
+    entity_category: config
+    icon: "mdi:message-text"
+
+# ------------------------------------------------------------------------------
+# Светодиод и зуммер
+# ------------------------------------------------------------------------------
+output:
+  - platform: gpio
+    pin: ${pin_led}
+    inverted: true
+    id: led_gpio
+
+  # Пассивный зуммер: частота задаётся скриптом buzzer_tone (3000 Гц).
+  - platform: esp8266_pwm
+    pin: ${pin_buzzer}
+    id: buzzer_out
+
+switch:
+  - platform: output
+    output: led_gpio
+    name: "LED"
+    id: led_switch
+    entity_category: config
+    icon: "mdi:lightbulb"
+
+  # Заводская настройка «Звуковой сигнал».
+  - platform: template
+    name: "Sound"
+    id: sound_enabled
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    entity_category: config
+    icon: "mdi:volume-high"
+    on_turn_off:
+      then:
+        # Заглушить уже звучащий тон, иначе он доиграет до конца.
+        - script.stop: buzzer_tone
+        - output.set_level:
+            id: buzzer_out
+            level: 0%
+
+button:
+  - platform: template
+    name: "Beep test"
+    icon: "mdi:bell-ring"
+    entity_category: diagnostic
+    on_press:
+      then:
+        # Тестовый сигнал не зависит от выключателя Sound.
+        - script.execute: buzzer_tone
+
+  - platform: template
+    name: "Acknowledge alarm"
+    icon: "mdi:bell-off"
+    entity_category: diagnostic
+    on_press:
+      then:
+        - if:
+            condition:
+              binary_sensor.is_on: temp_alarm
+            then:
+              - script.execute: stop_alarm
+
+  - platform: restart
+    name: "Restart"
+    entity_category: diagnostic
+
+  - platform: safe_mode
+    name: "Safe mode"
+    entity_category: diagnostic
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+      entity_category: diagnostic
+    ssid:
+      name: "SSID"
+      entity_category: diagnostic
+    bssid:
+      name: "BSSID"
+      entity_category: diagnostic
+
+  - platform: version
+    name: "ESPHome Version"
+    entity_category: diagnostic
+    disabled_by_default: true
+
+# ------------------------------------------------------------------------------
+# Служебное
+# ------------------------------------------------------------------------------
+globals:
+  - id: wifi_minutes
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
+
+http_request:
+  # Сертификат api.telegram.org на ESP8266 не проверяем: без синхронизации
+  # времени проверка цепочки невозможна.
+  verify_ssl: false
+  timeout: 10s
+  follow_redirects: true
+  useragent: esphome-thermobot
+
+script:
+  - id: blink_led
+    mode: single
+    then:
+      - switch.turn_on: led_switch
+      - delay: 200ms
+      - switch.turn_off: led_switch
+
+  # Один тон с заводскими параметрами tone(12, 3000, 100).
+  - id: buzzer_tone
+    mode: single
+    then:
+      - output.esp8266_pwm.set_frequency:
+          id: buzzer_out
+          frequency: ${buzzer_frequency}
+      - output.set_level:
+          id: buzzer_out
+          level: 50%
+      - delay: ${buzzer_duration}
+      - output.set_level:
+          id: buzzer_out
+          level: 0%
+
+  # Один короткий сигнал с учётом выключателя Sound.
+  - id: beep
+    mode: single
+    then:
+      - if:
+          condition:
+            switch.is_on: sound_enabled
+          then:
+            - script.execute: buzzer_tone
+
+  # Пока температура вне границ: мигание, сигнал и сообщение в Telegram
+  # с повтором через «Alarm repeat interval» (как в заводской прошивке).
+  - id: alarm_loop
+    mode: single
+    then:
+      - while:
+          condition:
+            binary_sensor.is_on: temp_alarm
+          then:
+            - script.execute: blink_led
+            - script.execute: beep
+            - lambda: |-
+                std::string msg = id(telegram_message).state;
+                auto replace_all = [](std::string &s, const std::string &what, const std::string &with) {
+                  size_t pos = 0;
+                  while ((pos = s.find(what, pos)) != std::string::npos) {
+                    s.replace(pos, what.size(), with);
+                    pos += with.size();
+                  }
+                };
+                if (std::isnan(id(temp).state)) {
+                  msg = "нет датчика";
+                } else {
+                  char v[24], lo[24], hi[24];
+                  snprintf(v, sizeof(v), "%.1f", id(temp).state);
+                  snprintf(lo, sizeof(lo), "%.1f", id(alarm_low).state);
+                  snprintf(hi, sizeof(hi), "%.1f", id(alarm_high).state);
+                  replace_all(msg, "{t}", v);
+                  replace_all(msg, "{lo}", lo);
+                  replace_all(msg, "{hi}", hi);
+                }
+                id(send_telegram).execute(msg);
+            - delay: !lambda |-
+                float iv = id(alarm_interval).state;
+                if (std::isnan(iv) || iv < 1) {
+                  iv = 600;
+                }
+                return (uint32_t) (iv * 1000);
+
+  # Безопасная остановка сигнала: сценарии, тон и светодиод.
+  - id: stop_alarm
+    mode: restart
+    then:
+      - script.stop: alarm_loop
+      - script.stop: beep
+      - script.stop: buzzer_tone
+      - output.set_level:
+          id: buzzer_out
+          level: 0%
+      - switch.turn_off: led_switch
+
+  # Отправка сообщения в Telegram. Текст URL-кодируется, чтобы кириллица,
+  # пробелы и знаки препинания доходили без искажений.
+  - id: send_telegram
+    mode: single
+    parameters:
+      message: std::string
+    then:
+      - logger.log: "Sending Telegram notification"
+      - http_request.get:
+          url: !lambda |-
+            std::string enc;
+            for (char ch : message) {
+              unsigned char c = (unsigned char) ch;
+              if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                  (c >= '0' && c <= '9') || c == '-' || c == '_' ||
+                  c == '.' || c == '~') {
+                enc += (char) c;
+              } else {
+                char esc[4];
+                snprintf(esc, sizeof(esc), "%%%02X", (unsigned int) c);
+                enc += esc;
+              }
+            }
+            return "https://api.telegram.org/bot${tg_token}/sendMessage?chat_id=${tg_chat}&text=" + enc;
+
+  # Аналог заводского таймера «перезагрузки Wi-Fi модуля».
+  - id: wifi_module_restart
+    mode: single
+    then:
+      - logger.log: "Restarting Wi-Fi module (factory reload timer)"
+      - wifi.disable:
+      - delay: 3s
+      - wifi.enable:
+
+interval:
+  - interval: 60s
+    then:
+      - lambda: |-
+          float lim = id(wifi_restart).state;
+          if (std::isnan(lim) || lim <= 0) {
+            id(wifi_minutes) = 0;
+            return;
+          }
+          id(wifi_minutes)++;
+          if (id(wifi_minutes) >= (uint32_t) lim) {
+            id(wifi_minutes) = 0;
+            id(wifi_module_restart).execute();
+          }
+
+# ==============================================================================
+# Примечания
+# 1. Как узнать адрес DS18B20 (если датчиков несколько): временно поставьте
+#    logger.level: DEBUG, соберите и посмотрите адреса в логе, затем добавьте
+#    в dallas_temp строку address: 0x....
+# 2. TM1637 в заводской прошивке есть, но на плате Mini индикатор может быть
+#    не распаян. Если его нет — удалите блок display, GPIO4/5 освободятся.
+# 3. Заводские пороги 5/30 °C включаются заменой substitutions
+#    alarm_low_default/alarm_high_default.
+# 4. Команды Telegram-бота заменены сущностями; в Home Assistant их можно
+#    вызывать из автоматизаций, например:
+#      action: number.set_value
+#      target: { entity_id: number.thermobot_alarm_high }
+#      data: { value: 35.1 }
+# 5. Перезагрузка Wi-Fi раз в N минут рвёт соединение с HA на несколько
+#    секунд — это поведение оригинала; при необходимости замените
+#    wifi.disable/enable на wifi.reconnect.
+# ==============================================================================
