@@ -8,7 +8,7 @@
 | Датчики | DS18B20 × 2 (подача, обратка) | DS18B20 × 5 (улица, подача, обратка, шнек, воздух в бункере) |
 | Дисплей | нет | 3‑разрядный 7‑сегментный (TM1637) |
 | Кнопка | опционально (GPIO14) | нет |
-| Конфигурация | [heatflow.yaml](Thermobot‑2%20Mini/heatflow.yaml) | [boller-monitor.yaml](Thermobot-2.2/boller-monitor.yaml) |
+| Конфигурация | [heatflow.yaml](Thermobot‑2%20Mini/heatflow.yaml) | [boiler-monitor.yaml](Thermobot-2.2/boiler-monitor.yaml) |
 | Адрес в сети | [heatflow.local](http://heatflow.local) | `boiler-monitor.local` |
 | Статус | проверена автором на плате (ESPHome 2026.9.1); последние доработки проверьте при первой сборке | подготовлена, сборку и работу на плате нужно проверить |
 
@@ -207,27 +207,8 @@ api_key: "api_ключ_для_home_assistant"
 
 ## Развитие проекта
 
-Для сведения привожу yaml прошивки после реверс‑инжиниринга оригинального дампа (автором не тестировалась, но соответствует по GPIO): [thermobot.yaml](thermobot.yaml). Он же служит источником распиновки для Thermobot‑2.2.
+Для сведения привожу yaml прошивки после реверс‑инжиниринга оригинального дампа (автором не тестировалась, но соответствует по GPIO): [thermobot-ds.yaml](Thermobot‑2%20Mini/thermobot-ds.yaml). Он же служит источником распиновки для Thermobot‑2.2.
 
 ### Обновление прошивки
 
-Используйте интерфейсы ESPHome API или web по адресу mDNS в локальной сети: [heatflow.local](http://heatflow.local) или `boiler-monitor.local`, либо по IP.
-
-## Структура репозитория
-
-```
-├── Thermobot‑2 Mini/
-│   └── heatflow.yaml
-├── Thermobot-2.2/
-│   ├── boller-monitor.yaml
-│   ├── boiler-monitor-description.md
-│   ├── boiler-monitor-lovelace.yaml
-│   └── boiler-monitor-automation.yaml
-├── images/
-│   ├── hass-esphome-graf.png
-│   ├── PINOUT-MINI2.JPG
-│   └── write-bin.jpeg
-├── thermobot.yaml
-├── secrets.example.yaml
-└── README.MD
-```
+Используйте интерфейсы ESPHome API или web по адресу mDNS в локальной сети: [heatflow.local](http://heatflow.local) или [boiler-monitor](http://boiler-monitor.local), либо по IP.
