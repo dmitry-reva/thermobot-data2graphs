@@ -126,7 +126,7 @@
 
 ## Программная часть
 
-- **Создание прошивки** ESPHome для ESP8266MOD (4Mb) осуществляется с помощью файла конфигурации нужного устройства: [heatflow.yaml](Thermobot‑2%20Mini/heatflow.yaml) для Thermobot‑2 Mini или [boller-monitor.yaml](Thermobot-2.2/boller-monitor.yaml) для Thermobot‑2.2. Результат сборки это скомпилированный firmware.bin.
+- **Создание прошивки** ESPHome для ESP8266MOD (4Mb) осуществляется с помощью файла конфигурации нужного устройства: [heatflow.yaml](Thermobot‑2%20Mini/heatflow.yaml) для Thermobot‑2 Mini или [boiler-monitor.yaml](Thermobot-2.2/boiler-monitor.yaml) для Thermobot‑2.2. Результат сборки это скомпилированный firmware.bin.
 - **Прошивка проекта** локально с помощью esptool через адаптер USB‑UART.
 - **Web‑интерфейс** доступен в новой прошивке по адресу mDNS в локальной сети (`heatflow.local` или `boiler-monitor.local`), либо по IP.
 - **Home Assistant** получит новое устройство через стандартную интеграцию ESPHome.
@@ -186,6 +186,8 @@ wifi_password: "пароль_вашей_сети_2.4GHz"
 web_server_pass: "пароль_для_веб_интерфейса"
 api_key: "api_ключ_для_home_assistant"
 ```
+
+> Важно: имя ключа `wifi_0f` в `secrets.yaml` должно совпадать с тем, что используется в YAML-конфигурации (`wifi_0f` подставляется как `!secret wifi_0f`). Это не опечатка и не надо переименовывать его в `wifi_ssid`.
 
 `secrets.yaml` исключён в корневом `.gitignore` и не должен попадать в git.
 
